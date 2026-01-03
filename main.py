@@ -5,45 +5,48 @@ Matrix Sticker 管理插件
 依赖 astrbot_plugin_matrix_adapter 的 sticker 模块
 """
 
+import importlib
 import sys
 from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Image, Plain, Reply
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star
 
 
-@register(
-    "astrbot_plugin_matrix_sticker",
-    "AstrBot",
-    "Matrix Sticker 管理插件，提供 sticker 保存、列表和发送命令",
-    "1.0.0",
-)
 class MatrixStickerPlugin(Star):
     """Matrix Sticker 管理插件"""
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context, config)
         self._storage = None
-        self._sticker_module = None
+        self._Sticker = None
+        self._StickerInfo = None
         self._init_sticker_module()
 
     def _init_sticker_module(self):
         """初始化 sticker 模块（从 matrix adapter 导入）"""
         try:
-            # 尝试导入 matrix adapter 的 sticker 模块
-            from ..astrbot_plugin_matrix_adapter.sticker import Sticker, StickerStorage
+            # 确保 plugins 目录在 sys.path 中
+            plugins_dir = Path(__file__).parent.parent
+            if str(plugins_dir) not in sys.path:
+                sys.path.insert(0, str(plugins_dir))
 
-            self._sticker_module = sys.modules.get("astrbot_plugin_matrix_adapter.sticker")
-            self._storage = StickerStorage()
-            self._Sticker = Sticker
+            # 使用 importlib 动态导入
+            sticker_module = importlib.import_module(
+                "astrbot_plugin_matrix_adapter.sticker"
+            )
+            self._storage = sticker_module.StickerStorage()
+            self._Sticker = sticker_module.Sticker
+            self._StickerInfo = sticker_module.StickerInfo
             logger.info("Matrix Sticker 插件初始化成功")
         except ImportError as e:
-            logger.warning(f"无法导入 matrix sticker 模块: {e}")
+            logger.warning(f"无法导入 matrix sticker 模块：{e}")
             logger.warning("请确保已安装 astrbot_plugin_matrix_adapter 插件")
             self._storage = None
             self._Sticker = None
+            self._StickerInfo = None
 
     def _ensure_storage(self):
         """确保存储已初始化"""
@@ -52,7 +55,7 @@ class MatrixStickerPlugin(Star):
         return self._storage is not None
 
     @filter.command("sticker")
-    async def sticker_command(self, event: AstrMessageEvent, context: Context):
+    async def sticker_command(self, event: AstrMessageEvent):
         """
         Sticker 管理命令
 
@@ -90,7 +93,7 @@ class MatrixStickerPlugin(Star):
 
         elif subcommand == "save":
             if len(args) < 3:
-                yield event.plain_result("用法: /sticker save <name> [pack]")
+                yield event.plain_result("用法：/sticker save <name> [pack]")
                 return
             name = args[2]
             pack_name = args[3] if len(args) > 3 else None
@@ -99,7 +102,7 @@ class MatrixStickerPlugin(Star):
 
         elif subcommand == "send":
             if len(args) < 3:
-                yield event.plain_result("用法: /sticker send <id|name>")
+                yield event.plain_result("用法：/sticker send <id|name>")
                 return
             identifier = args[2]
             result = await self._send_sticker(event, identifier)
@@ -109,7 +112,7 @@ class MatrixStickerPlugin(Star):
 
         elif subcommand == "delete":
             if len(args) < 3:
-                yield event.plain_result("用法: /sticker delete <id>")
+                yield event.plain_result("用法：/sticker delete <id>")
                 return
             sticker_id = args[2]
             result = self._delete_sticker(sticker_id)
@@ -125,7 +128,7 @@ class MatrixStickerPlugin(Star):
             yield event.plain_result(result)
 
         else:
-            yield event.plain_result(f"未知子命令: {subcommand}\n" + self._get_help_text())
+            yield event.plain_result(f"未知子命令：{subcommand}\n" + self._get_help_text())
 
     def _get_help_text(self) -> str:
         """获取帮助文本"""
@@ -202,16 +205,17 @@ class MatrixStickerPlugin(Star):
                 if isinstance(component, Image):
                     # 将图片转换为 sticker
                     try:
-                        from astrbot_plugin_matrix_adapter.sticker import Sticker, StickerInfo
+                        if self._Sticker is None or self._StickerInfo is None:
+                            raise ImportError("Sticker 模块未加载")
 
-                        sticker_to_save = Sticker(
+                        sticker_to_save = self._Sticker(
                             body=name,
                             url=component.file or component.url,
-                            info=StickerInfo(mimetype="image/png"),
+                            info=self._StickerInfo(mimetype="image/png"),
                         )
                         break
                     except Exception as e:
-                        logger.warning(f"转换图片为 sticker 失败: {e}")
+                        logger.warning(f"转换图片为 sticker 失败：{e}")
 
         if sticker_to_save is None:
             return "未找到可保存的 sticker 或图片。请回复包含 sticker/图片 的消息，或发送包含图片的消息。"
@@ -226,7 +230,7 @@ class MatrixStickerPlugin(Star):
             client = None
             # 尝试从平台管理器获取 Matrix client
             try:
-                for platform in self.context.platform_manager.get_platforms():
+                for platform in self.context.platform_manager.get_insts():
                     if hasattr(platform, "client") and hasattr(platform, "_matrix_config"):
                         client = platform.client
                         break
@@ -240,8 +244,8 @@ class MatrixStickerPlugin(Star):
             )
             return f"已保存 sticker: {meta.sticker_id[:8]} ({name})"
         except Exception as e:
-            logger.error(f"保存 sticker 失败: {e}")
-            return f"保存失败: {e}"
+            logger.error(f"保存 sticker 失败：{e}")
+            return f"保存失败：{e}"
 
     async def _send_sticker(self, event: AstrMessageEvent, identifier: str):
         """发送 sticker"""
@@ -263,8 +267,8 @@ class MatrixStickerPlugin(Star):
             await event.send(chain)
             return None  # 成功发送，不返回文本
         except Exception as e:
-            logger.error(f"发送 sticker 失败: {e}")
-            return f"发送失败: {e}"
+            logger.error(f"发送 sticker 失败：{e}")
+            return f"发送失败：{e}"
 
     def _delete_sticker(self, sticker_id: str) -> str:
         """删除 sticker"""
@@ -278,13 +282,13 @@ class MatrixStickerPlugin(Star):
 
         lines = [
             "Sticker 统计信息：",
-            f"  总数量: {stats['total_count']}",
-            f"  占用空间: {stats['total_size_mb']} MB",
-            f"  包数量: {stats['pack_count']}",
+            f"  总数量：{stats['total_count']}",
+            f"  占用空间：{stats['total_size_mb']} MB",
+            f"  包数量：{stats['pack_count']}",
         ]
 
         if stats["packs"]:
-            lines.append(f"  包列表: {', '.join(stats['packs'][:5])}")
+            lines.append(f"  包列表：{', '.join(stats['packs'][:5])}")
             if len(stats["packs"]) > 5:
                 lines.append(f"    ... 共 {len(stats['packs'])} 个包")
 
@@ -300,7 +304,7 @@ class MatrixStickerPlugin(Star):
 
             # 尝试获取 Matrix 适配器和同步器
             syncer = None
-            for platform in self.context.platform_manager.get_platforms():
+            for platform in self.context.platform_manager.get_insts():
                 if hasattr(platform, "sticker_syncer"):
                     syncer = platform.sticker_syncer
                     break
@@ -323,5 +327,5 @@ class MatrixStickerPlugin(Star):
                     return "该房间没有自定义 sticker 包（im.ponies.room_emotes）"
 
         except Exception as e:
-            logger.error(f"同步房间 sticker 失败: {e}")
-            return f"同步失败: {e}"
+            logger.error(f"同步房间 sticker 失败：{e}")
+            return f"同步失败：{e}"
