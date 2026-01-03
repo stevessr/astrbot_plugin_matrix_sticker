@@ -127,8 +127,8 @@ class StickerLLMMixin:
                         )
                         chain = MessageChain([sticker])
                         logger.info(f"创建 MessageChain: {chain}")
-                        result = await event.send(chain)
-                        logger.info(f"发送结果: {result}")
+                        send_result = await event.send(chain)
+                        logger.info(f"发送结果: {send_result}")
                     except Exception as e:
                         logger.error(f"发送 sticker 失败：{e}", exc_info=True)
             else:

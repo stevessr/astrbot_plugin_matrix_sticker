@@ -2,6 +2,6 @@
 Matrix Sticker 管理插件
 """
 
-from .main import Main, MatrixStickerPlugin
+from .main import MatrixStickerPlugin
 
-__all__ = ["MatrixStickerPlugin", "Main"]
+__all__ = ["MatrixStickerPlugin"]
