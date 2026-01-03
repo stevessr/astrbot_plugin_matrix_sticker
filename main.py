@@ -405,8 +405,8 @@ class MatrixStickerPlugin(Star):
         all_matches = list(SHORTCODE_PATTERN.finditer(full_text))
         logger.debug(f"在文本中找到 {len(all_matches)} 个短码匹配: {[m.group(1) for m in all_matches]}")
 
-        # 收集所有找到的 sticker
-        found_stickers = []
+        # 收集所有找到的 sticker（使用字典去重，key 为 sticker_id）
+        found_stickers: dict[str, any] = {}
         new_chain = []
         modified = False
 
@@ -430,6 +430,9 @@ class MatrixStickerPlugin(Star):
                     logger.debug(f"查找短码 '{shortcode}': {'找到' if sticker else '未找到'}")
 
                     if sticker:
+                        # 获取 sticker ID 用于去重
+                        sticker_id = getattr(sticker, 'sticker_id', None) or sticker.body
+
                         # 添加短码之前的文本
                         if match.start() > last_end:
                             before_text = text[last_end : match.start()]
@@ -437,12 +440,15 @@ class MatrixStickerPlugin(Star):
                                 new_chain.append(Plain(before_text))
 
                         if is_streaming:
-                            # 流式输出时，收集 sticker 稍后单独发送
-                            found_stickers.append(sticker)
+                            # 流式输出时，收集 sticker 稍后单独发送（去重）
+                            if sticker_id not in found_stickers:
+                                found_stickers[sticker_id] = sticker
                             # 保留短码文本（已经显示给用户了）
                         else:
-                            # 非流式输出时，直接替换
-                            new_chain.append(sticker)
+                            # 非流式输出时，直接替换（也去重，只添加第一次出现的）
+                            if sticker_id not in found_stickers:
+                                new_chain.append(sticker)
+                                found_stickers[sticker_id] = sticker
 
                         last_end = match.end()
                         modified = True
@@ -464,11 +470,12 @@ class MatrixStickerPlugin(Star):
 
         if modified:
             if is_streaming and found_stickers:
-                # 流式输出完成后，单独发送找到的 sticker
-                logger.info(f"流式输出完成，发送 {len(found_stickers)} 个 sticker")
-                for i, sticker in enumerate(found_stickers):
+                # 流式输出完成后，单独发送找到的 sticker（已去重）
+                unique_stickers = list(found_stickers.values())
+                logger.info(f"流式输出完成，发送 {len(unique_stickers)} 个去重后的 sticker")
+                for i, sticker in enumerate(unique_stickers):
                     try:
-                        logger.info(f"发送 sticker {i+1}/{len(found_stickers)}: {sticker.body if hasattr(sticker, 'body') else sticker}")
+                        logger.info(f"发送 sticker {i+1}/{len(unique_stickers)}: {sticker.body if hasattr(sticker, 'body') else sticker}")
                         chain = MessageChain([sticker])
                         logger.info(f"创建 MessageChain: {chain}")
                         result = await event.send(chain)
