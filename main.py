@@ -49,9 +49,15 @@ class MatrixStickerPlugin(Star):
             self._StickerInfo = None
 
     def _ensure_storage(self):
-        """确保存储已初始化"""
+        """确保存储已初始化并刷新索引"""
         if self._storage is None:
             self._init_sticker_module()
+        if self._storage is not None:
+            # 重新加载索引以获取最新数据
+            if hasattr(self._storage, "reload_index"):
+                self._storage.reload_index()
+            elif hasattr(self._storage, "_load_index"):
+                self._storage._load_index()
         return self._storage is not None
 
     @filter.command("sticker")
