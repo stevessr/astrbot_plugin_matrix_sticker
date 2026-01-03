@@ -5,7 +5,7 @@ Matrix Sticker 管理插件
 依赖 astrbot_plugin_matrix_adapter 的 sticker 模块
 """
 
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, register
 
 from .sticker_alias import StickerAliasMixin
 from .sticker_commands import StickerCommandMixin
@@ -13,6 +13,12 @@ from .sticker_llm import StickerLLMMixin
 from .sticker_storage import StickerStorageMixin
 
 
+@register(
+    name="astrbot_plugin_matrix_sticker",
+    desc="Matrix Sticker 管理插件，提供 sticker 保存、列表和发送命令",
+    version="1.0.0",
+    author="AstrBot",
+)
 class MatrixStickerPlugin(
     Star,
     StickerStorageMixin,
@@ -28,7 +34,3 @@ class MatrixStickerPlugin(
         self._Sticker = None
         self._StickerInfo = None
         self._init_sticker_module()
-
-
-class Main(MatrixStickerPlugin):
-    """兼容旧版入口类名"""
