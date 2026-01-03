@@ -28,3 +28,7 @@ class MatrixStickerPlugin(
         self._Sticker = None
         self._StickerInfo = None
         self._init_sticker_module()
+
+
+class Main(MatrixStickerPlugin):
+    """兼容旧版入口类名"""

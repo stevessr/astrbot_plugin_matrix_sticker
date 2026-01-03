@@ -6,12 +6,23 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Plain
 from astrbot.core.message.message_event_result import ResultContentType
-from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
 from .sticker_constants import SHORTCODE_PATTERN, STICKER_PROMPT_TEMPLATE
 
 
 class StickerLLMMixin:
+    @filter.on_llm_response()
+    async def cache_llm_response(
+        self, event: AstrMessageEvent, response: LLMResponse | None
+    ):
+        """Cache LLM completion text for streaming finish hooks."""
+        if not response:
+            return
+        completion_text = response.completion_text
+        if completion_text:
+            event.set_extra("_sticker_llm_completion", completion_text)
+
     @filter.on_decorating_result()
     async def replace_shortcodes(self, event: AstrMessageEvent):
         """Replace :shortcode: with sticker components."""
@@ -34,6 +45,12 @@ class StickerLLMMixin:
         for component in result.chain:
             if isinstance(component, Plain):
                 full_text += component.text
+
+        if not full_text:
+            cached_text = event.get_extra("_sticker_llm_completion", "")
+            if cached_text:
+                result.chain = [Plain(cached_text)]
+                full_text = cached_text
 
         all_matches = list(SHORTCODE_PATTERN.finditer(full_text))
         logger.debug(
