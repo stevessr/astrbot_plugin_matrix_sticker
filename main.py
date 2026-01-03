@@ -14,6 +14,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.api.star import Context, Star
+from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.provider.entities import ProviderRequest
 
 # 表情短码正则：匹配 :shortcode: 格式
@@ -381,12 +382,31 @@ class MatrixStickerPlugin(Star):
         例如：文本中的 :thinking: 会被替换为名为 "thinking" 的 sticker
         """
         if not self._ensure_storage():
+            logger.debug("Sticker storage 未初始化，跳过短码替换")
             return
 
         result = event.get_result()
         if result is None or not result.chain:
+            logger.debug("没有消息结果或消息链为空")
             return
 
+        # 检查是否是流式输出
+        result_type = getattr(result, "result_content_type", None)
+        is_streaming = result_type == ResultContentType.STREAMING_FINISH
+        logger.debug(f"处理消息，result_content_type={result_type}, is_streaming={is_streaming}")
+
+        # 提取所有文本内容
+        full_text = ""
+        for component in result.chain:
+            if isinstance(component, Plain):
+                full_text += component.text
+
+        # 查找所有短码
+        all_matches = list(SHORTCODE_PATTERN.finditer(full_text))
+        logger.debug(f"在文本中找到 {len(all_matches)} 个短码匹配: {[m.group(1) for m in all_matches]}")
+
+        # 收集所有找到的 sticker
+        found_stickers = []
         new_chain = []
         modified = False
 
@@ -407,6 +427,7 @@ class MatrixStickerPlugin(Star):
 
                     # 查找对应的 sticker
                     sticker = self._find_sticker_by_shortcode(shortcode)
+                    logger.debug(f"查找短码 '{shortcode}': {'找到' if sticker else '未找到'}")
 
                     if sticker:
                         # 添加短码之前的文本
@@ -415,8 +436,14 @@ class MatrixStickerPlugin(Star):
                             if before_text:
                                 new_chain.append(Plain(before_text))
 
-                        # 添加 sticker
-                        new_chain.append(sticker)
+                        if is_streaming:
+                            # 流式输出时，收集 sticker 稍后单独发送
+                            found_stickers.append(sticker)
+                            # 保留短码文本（已经显示给用户了）
+                        else:
+                            # 非流式输出时，直接替换
+                            new_chain.append(sticker)
+
                         last_end = match.end()
                         modified = True
                     # 如果没找到对应的 sticker，保留原文本
@@ -433,9 +460,25 @@ class MatrixStickerPlugin(Star):
             else:
                 new_chain.append(component)
 
+        logger.debug(f"处理完成: modified={modified}, found_stickers={len(found_stickers)}")
+
         if modified:
-            result.chain = new_chain
-            logger.debug(f"已替换消息中的 sticker 短码")
+            if is_streaming and found_stickers:
+                # 流式输出完成后，单独发送找到的 sticker
+                logger.info(f"流式输出完成，发送 {len(found_stickers)} 个 sticker")
+                for i, sticker in enumerate(found_stickers):
+                    try:
+                        logger.info(f"发送 sticker {i+1}/{len(found_stickers)}: {sticker.body if hasattr(sticker, 'body') else sticker}")
+                        chain = MessageChain([sticker])
+                        logger.info(f"创建 MessageChain: {chain}")
+                        result = await event.send(chain)
+                        logger.info(f"发送结果: {result}")
+                    except Exception as e:
+                        logger.error(f"发送 sticker 失败：{e}", exc_info=True)
+            else:
+                # 非流式输出时，替换消息链
+                result.chain = new_chain
+                logger.debug("已替换消息中的 sticker 短码")
 
     def _find_sticker_by_shortcode(self, shortcode: str):
         """根据短码查找 sticker（支持 body 和别名）"""
