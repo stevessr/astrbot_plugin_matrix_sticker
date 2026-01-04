@@ -22,6 +22,11 @@ class StickerManageMixin(StickerBaseMixin):
 /sticker stats - 显示统计信息
 /sticker sync - 同步当前房间的 sticker 包
 
+房间表情管理（Matrix 专用）：
+/sticker addroom <shortcode> - 添加引用图片为房间表情
+/sticker removeroom <shortcode> - 移除房间表情
+/sticker roomlist - 列出当前房间的自定义表情
+
 别名管理：
 /sticker_alias add <id> <alias> - 添加别名短码
 /sticker_alias remove <id> <alias> - 移除别名
@@ -31,5 +36,6 @@ class StickerManageMixin(StickerBaseMixin):
 - 回复一条包含 sticker 的消息并使用 /sticker save 来保存
 - 使用 /sticker send 来发送已保存的 sticker
 - 使用 /sticker sync 来同步房间的自定义 sticker
+- 添加房间表情需要房间管理员权限
 - LLM 会自动获知可用的 sticker 短码
 - 在消息中使用 :shortcode: 格式会自动替换为 sticker"""

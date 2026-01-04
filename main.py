@@ -101,6 +101,32 @@ class MatrixStickerPlugin(
             result = await self.cmd_sync_room_stickers(event)
             yield event.plain_result(result)
 
+        elif subcommand == "addroom":
+            if len(args) < 3:
+                yield event.plain_result(
+                    "用法：/sticker addroom <shortcode>\n"
+                    "请先引用一条包含图片的消息，然后发送此命令"
+                )
+                return
+            shortcode = args[2]
+            state_key = args[3] if len(args) > 3 else ""
+            result = await self.cmd_add_room_emote(event, shortcode, state_key)
+            yield event.plain_result(result)
+
+        elif subcommand == "removeroom":
+            if len(args) < 3:
+                yield event.plain_result("用法：/sticker removeroom <shortcode>")
+                return
+            shortcode = args[2]
+            state_key = args[3] if len(args) > 3 else ""
+            result = await self.cmd_remove_room_emote(event, shortcode, state_key)
+            yield event.plain_result(result)
+
+        elif subcommand == "roomlist":
+            state_key = args[2] if len(args) > 2 else ""
+            result = await self.cmd_list_room_emotes(event, state_key)
+            yield event.plain_result(result)
+
         else:
             yield event.plain_result(
                 f"未知子命令：{subcommand}\n" + self._get_help_text()
