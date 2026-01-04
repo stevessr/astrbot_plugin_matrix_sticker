@@ -1,19 +1,38 @@
 """
-Matrix sticker LLM and message hooks.
+Matrix sticker LLM mixin - LLM 相关 hook 逻辑
 """
 
+import re
+
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Plain
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
-from .sticker_constants import SHORTCODE_PATTERN, STICKER_PROMPT_TEMPLATE
+from .base import StickerBaseMixin
+
+SHORTCODE_PATTERN = re.compile(r":([a-zA-Z0-9_-]+):")
+
+STICKER_PROMPT_TEMPLATE = """
+## 可用的表情贴纸
+
+你可以在回复中使用以下表情贴纸短码，格式为 :短码:，系统会自动将其替换为对应的贴纸图片。
+
+可用短码列表：
+{sticker_list}
+
+使用示例：
+- 表达思考时可以用 :thinking:
+- 根据语境选择合适的表情来增强表达效果
+- 短码区分大小写，请使用准确的短码
+"""
 
 
-class StickerLLMMixin:
-    @filter.on_llm_response()
-    async def cache_llm_response(
+class StickerLLMMixin(StickerBaseMixin):
+    """Sticker LLM hook 逻辑"""
+
+    def hook_cache_llm_response(
         self, event: AstrMessageEvent, response: LLMResponse | None
     ):
         """Cache LLM completion text for streaming finish hooks."""
@@ -23,8 +42,7 @@ class StickerLLMMixin:
         if completion_text:
             event.set_extra("_sticker_llm_completion", completion_text)
 
-    @filter.on_decorating_result()
-    async def replace_shortcodes(self, event: AstrMessageEvent):
+    async def hook_replace_shortcodes(self, event: AstrMessageEvent):
         """Replace :shortcode: with sticker components."""
         if not self._ensure_storage():
             logger.debug("Sticker storage 未初始化，跳过短码替换")
@@ -135,10 +153,7 @@ class StickerLLMMixin:
                 result.chain = new_chain
                 logger.debug("已替换消息中的 sticker 短码")
 
-    @filter.on_llm_request()
-    async def inject_sticker_prompt(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ):
+    def hook_inject_sticker_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """Inject available sticker shortcodes into LLM prompt."""
         if not self._ensure_storage():
             return

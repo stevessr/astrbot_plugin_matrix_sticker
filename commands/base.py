@@ -1,5 +1,5 @@
 """
-Matrix sticker storage helpers.
+Matrix sticker base mixin - 存储和辅助方法
 """
 
 import importlib
@@ -11,11 +11,13 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image, Reply
 
 
-class StickerStorageMixin:
+class StickerBaseMixin:
+    """Sticker 基础功能：初始化、存储、查找等"""
+
     def _init_sticker_module(self):
         """初始化 sticker 模块（从 matrix adapter 导入）"""
         try:
-            plugins_dir = Path(__file__).parent.parent
+            plugins_dir = Path(__file__).parent.parent.parent
             if str(plugins_dir) not in sys.path:
                 sys.path.insert(0, str(plugins_dir))
 
@@ -44,7 +46,36 @@ class StickerStorageMixin:
                 self._storage._load_index()
         return self._storage is not None
 
-    async def _list_stickers(self, pack_name: str | None = None) -> str:
+    def _find_sticker_by_shortcode(self, shortcode: str):
+        """根据短码查找 sticker（支持 body 和别名）"""
+        if self._storage is None:
+            return None
+
+        all_stickers = self._storage.list_stickers(limit=1000)
+
+        for meta in all_stickers:
+            if meta.body.lower() == shortcode.lower():
+                return self._storage.get_sticker(meta.sticker_id)
+
+        for meta in all_stickers:
+            if meta.tags and shortcode.lower() in [t.lower() for t in meta.tags]:
+                return self._storage.get_sticker(meta.sticker_id)
+
+        results = self._storage.find_stickers(query=shortcode, limit=1)
+        if results:
+            return results[0]
+
+        return None
+
+    def _get_sticker_shortcodes(self) -> list[str]:
+        """获取所有可用的 sticker 短码"""
+        if self._storage is None:
+            return []
+
+        stickers = self._storage.list_stickers(limit=100)
+        return [meta.body for meta in stickers]
+
+    async def cmd_list_stickers(self, pack_name: str | None = None) -> str:
         """列出 sticker"""
         stickers = self._storage.list_stickers(pack_name=pack_name, limit=20)
 
@@ -63,7 +94,7 @@ class StickerStorageMixin:
 
         return "\n".join(lines)
 
-    def _list_packs(self) -> str:
+    def cmd_list_packs(self) -> str:
         """列出所有包"""
         packs = self._storage.list_packs()
 
@@ -77,7 +108,7 @@ class StickerStorageMixin:
 
         return "\n".join(lines)
 
-    async def _save_sticker(
+    async def cmd_save_sticker(
         self, event: AstrMessageEvent, name: str, pack_name: str | None
     ) -> str:
         """保存 sticker"""
@@ -135,7 +166,7 @@ class StickerStorageMixin:
             logger.error(f"保存 sticker 失败：{e}")
             return f"保存失败：{e}"
 
-    async def _send_sticker(self, event: AstrMessageEvent, identifier: str):
+    async def cmd_send_sticker(self, event: AstrMessageEvent, identifier: str):
         """发送 sticker"""
         sticker = self._storage.get_sticker(identifier)
 
@@ -155,13 +186,13 @@ class StickerStorageMixin:
             logger.error(f"发送 sticker 失败：{e}")
             return f"发送失败：{e}"
 
-    def _delete_sticker(self, sticker_id: str) -> str:
+    def cmd_delete_sticker(self, sticker_id: str) -> str:
         """删除 sticker"""
         if self._storage.delete_sticker(sticker_id):
             return f"已删除 sticker: {sticker_id}"
         return f"未找到 sticker: {sticker_id}"
 
-    def _get_stats(self) -> str:
+    def cmd_get_stats(self) -> str:
         """获取统计信息"""
         stats = self._storage.get_stats()
 
@@ -179,7 +210,7 @@ class StickerStorageMixin:
 
         return "\n".join(lines)
 
-    async def _sync_room_stickers(self, event: AstrMessageEvent) -> str:
+    async def cmd_sync_room_stickers(self, event: AstrMessageEvent) -> str:
         """同步当前房间的 sticker 包"""
         try:
             room_id = event.session_id
@@ -212,32 +243,3 @@ class StickerStorageMixin:
         except Exception as e:
             logger.error(f"同步房间 sticker 失败：{e}")
             return f"同步失败：{e}"
-
-    def _find_sticker_by_shortcode(self, shortcode: str):
-        """根据短码查找 sticker（支持 body 和别名）"""
-        if self._storage is None:
-            return None
-
-        all_stickers = self._storage.list_stickers(limit=1000)
-
-        for meta in all_stickers:
-            if meta.body.lower() == shortcode.lower():
-                return self._storage.get_sticker(meta.sticker_id)
-
-        for meta in all_stickers:
-            if meta.tags and shortcode.lower() in [t.lower() for t in meta.tags]:
-                return self._storage.get_sticker(meta.sticker_id)
-
-        results = self._storage.find_stickers(query=shortcode, limit=1)
-        if results:
-            return results[0]
-
-        return None
-
-    def _get_sticker_shortcodes(self) -> list[str]:
-        """获取所有可用的 sticker 短码"""
-        if self._storage is None:
-            return []
-
-        stickers = self._storage.list_stickers(limit=100)
-        return [meta.body for meta in stickers]
