@@ -32,6 +32,17 @@ STICKER_PROMPT_TEMPLATE = """
 class StickerLLMMixin(StickerBaseMixin):
     """Sticker LLM hook 逻辑"""
 
+    def _get_max_stickers_per_reply(self) -> int | None:
+        config = getattr(self, "config", None) or {}
+        value = config.get("matrix_sticker_max_per_reply", 5)
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return 5
+        if value <= 0:
+            return None
+        return value
+
     def hook_cache_llm_response(
         self, event: AstrMessageEvent, response: LLMResponse | None
     ):
@@ -75,6 +86,7 @@ class StickerLLMMixin(StickerBaseMixin):
             f"在文本中找到 {len(all_matches)} 个短码匹配: {[m.group(1) for m in all_matches]}"
         )
 
+        max_stickers = self._get_max_stickers_per_reply()
         found_stickers: dict[str, any] = {}
         new_chain = []
         modified = False
@@ -89,6 +101,7 @@ class StickerLLMMixin(StickerBaseMixin):
                     continue
 
                 last_end = 0
+                component_modified = False
                 for match in matches:
                     shortcode = match.group(1)
 
@@ -97,16 +110,25 @@ class StickerLLMMixin(StickerBaseMixin):
                         f"查找短码 '{shortcode}': {'找到' if sticker else '未找到'}"
                     )
 
-                    if sticker:
-                        sticker_id = (
-                            getattr(sticker, "sticker_id", None) or sticker.body
-                        )
+                    if not sticker:
+                        continue
 
-                        if match.start() > last_end:
-                            before_text = text[last_end : match.start()]
-                            if before_text:
-                                new_chain.append(Plain(before_text))
+                    sticker_id = (
+                        getattr(sticker, "sticker_id", None) or sticker.body
+                    )
 
+                    if match.start() > last_end:
+                        before_text = text[last_end : match.start()]
+                        if before_text:
+                            new_chain.append(Plain(before_text))
+
+                    within_limit = (
+                        max_stickers is None
+                        or sticker_id in found_stickers
+                        or len(found_stickers) < max_stickers
+                    )
+
+                    if within_limit:
                         if is_streaming:
                             if sticker_id not in found_stickers:
                                 found_stickers[sticker_id] = sticker
@@ -114,16 +136,21 @@ class StickerLLMMixin(StickerBaseMixin):
                             if sticker_id not in found_stickers:
                                 new_chain.append(sticker)
                                 found_stickers[sticker_id] = sticker
-
-                        last_end = match.end()
                         modified = True
+                        component_modified = True
+                    else:
+                        new_chain.append(Plain(text[match.start() : match.end()]))
+                        component_modified = True
+
+                    last_end = match.end()
 
                 if last_end < len(text):
                     remaining_text = text[last_end:]
                     if remaining_text:
                         new_chain.append(Plain(remaining_text))
+                        component_modified = True
 
-                if not modified:
+                if not component_modified:
                     new_chain.append(component)
             else:
                 new_chain.append(component)

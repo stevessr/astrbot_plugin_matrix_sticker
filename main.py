@@ -32,6 +32,7 @@ class MatrixStickerPlugin(
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context, config)
+        self.config = config or {}
         self._storage = None
         self._Sticker = None
         self._StickerInfo = None

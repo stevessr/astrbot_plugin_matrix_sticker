@@ -1,0 +1,8 @@
+{
+  "matrix_sticker_max_per_reply": {
+    "description": "单次回复最多发送的 sticker 数量",
+    "type": "integer",
+    "hint": "限制 LLM 自动替换/发送 sticker 的数量，<= 0 表示不限制",
+    "default": 5
+  }
+}

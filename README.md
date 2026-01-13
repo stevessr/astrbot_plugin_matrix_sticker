@@ -50,3 +50,7 @@ Matrix Sticker 管理插件，提供 sticker 保存、列表、发送与别名�
 
 - 保存/添加房间表情通常需要引用一条图片消息。
 - 插件会在 LLM 处理阶段注入/替换 sticker 短码。
+
+## 配置
+
+- `matrix_sticker_max_per_reply`：单次回复最多发送的 sticker 数量，<= 0 表示不限制（默认 5）。
