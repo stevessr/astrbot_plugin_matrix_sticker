@@ -32,6 +32,10 @@ STICKER_PROMPT_TEMPLATE = """
 class StickerLLMMixin(StickerBaseMixin):
     """Sticker LLM hook 逻辑"""
 
+    def _is_full_intercept_enabled(self) -> bool:
+        config = getattr(self, "config", None) or {}
+        return bool(config.get("matrix_sticker_full_intercept", False))
+
     def _get_max_stickers_per_reply(self) -> int | None:
         config = getattr(self, "config", None) or {}
         value = config.get("matrix_sticker_max_per_reply", 5)
@@ -83,8 +87,14 @@ class StickerLLMMixin(StickerBaseMixin):
 
         all_matches = list(SHORTCODE_PATTERN.finditer(full_text))
         logger.debug(
-            f"在文本中找到 {len(all_matches)} 个短码匹配: {[m.group(1) for m in all_matches]}"
+            f"在文本中找到 {len(all_matches)} 个短码匹配：{[m.group(1) for m in all_matches]}"
         )
+
+        if self._is_full_intercept_enabled() and all_matches:
+            await self._send_split_messages(event, full_text, is_streaming)
+            if result:
+                result.chain = []
+            return
 
         max_stickers = self._get_max_stickers_per_reply()
         found_stickers: dict[str, any] = {}
@@ -156,7 +166,7 @@ class StickerLLMMixin(StickerBaseMixin):
                 new_chain.append(component)
 
         logger.debug(
-            f"处理完成: modified={modified}, found_stickers={len(found_stickers)}"
+            f"处理完成：modified={modified}, found_stickers={len(found_stickers)}"
         )
 
         if modified:
@@ -173,12 +183,61 @@ class StickerLLMMixin(StickerBaseMixin):
                         chain = MessageChain([sticker])
                         logger.info(f"创建 MessageChain: {chain}")
                         send_result = await event.send(chain)
-                        logger.info(f"发送结果: {send_result}")
+                        logger.info(f"发送结果：{send_result}")
                     except Exception as e:
                         logger.error(f"发送 sticker 失败：{e}", exc_info=True)
             else:
                 result.chain = new_chain
                 logger.debug("已替换消息中的 sticker 短码")
+
+    async def _send_split_messages(
+        self, event: AstrMessageEvent, full_text: str, is_streaming: bool
+    ) -> None:
+        max_stickers = self._get_max_stickers_per_reply()
+        found_stickers: dict[str, any] = {}
+        segments: list[Plain | any] = []
+
+        last_end = 0
+        for match in SHORTCODE_PATTERN.finditer(full_text):
+            if match.start() > last_end:
+                before_text = full_text[last_end : match.start()]
+                if before_text:
+                    segments.append(Plain(before_text))
+
+            shortcode = match.group(1)
+            sticker = self._find_sticker_by_shortcode(shortcode)
+            if sticker:
+                sticker_id = getattr(sticker, "sticker_id", None) or sticker.body
+                within_limit = (
+                    max_stickers is None
+                    or sticker_id in found_stickers
+                    or len(found_stickers) < max_stickers
+                )
+                if within_limit:
+                    if sticker_id not in found_stickers:
+                        found_stickers[sticker_id] = sticker
+                    segments.append(sticker)
+                else:
+                    segments.append(Plain(full_text[match.start() : match.end()]))
+            else:
+                segments.append(Plain(full_text[match.start() : match.end()]))
+
+            last_end = match.end()
+
+        if last_end < len(full_text):
+            remaining_text = full_text[last_end:]
+            if remaining_text:
+                segments.append(Plain(remaining_text))
+
+        for segment in segments:
+            try:
+                chain = MessageChain([segment])
+                await event.send(chain)
+            except Exception as e:
+                logger.error(f"发送分段消息失败：{e}", exc_info=True)
+                if is_streaming:
+                    continue
+                break
 
     def hook_inject_sticker_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """Inject available sticker shortcodes into LLM prompt."""

@@ -4,5 +4,11 @@
     "type": "integer",
     "hint": "限制 LLM 自动替换/发送 sticker 的数量，<= 0 表示不限制",
     "default": 5
+  },
+  "matrix_sticker_full_intercept": {
+    "description": "完全拦截回复并按短码分段发送",
+    "type": "boolean",
+    "hint": "开启后会把回复按 :shortcode: 分段发送，短码会转为 sticker；需要 Matrix 适配器启用流式发送禁用编辑",
+    "default": false
   }
 }
