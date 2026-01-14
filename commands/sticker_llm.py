@@ -105,6 +105,7 @@ class StickerLLMMixin(StickerBaseMixin):
             await self._send_split_messages(event, full_text, is_streaming)
             if result:
                 result.chain = []
+            event.set_extra("_streaming_finished", True)
             return
 
         max_stickers = self._get_max_stickers_per_reply()
@@ -242,6 +243,8 @@ class StickerLLMMixin(StickerBaseMixin):
                 segments.append(Plain(remaining_text))
 
         for segment in segments:
+            if isinstance(segment, Plain) and not segment.text.strip():
+                continue
             try:
                 chain_comps = []
                 if reply_id:
@@ -257,6 +260,8 @@ class StickerLLMMixin(StickerBaseMixin):
 
     def hook_inject_sticker_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """Inject available sticker shortcodes into LLM prompt."""
+        if self._is_full_intercept_enabled():
+            event.set_extra("enable_streaming", False)
         if not self._ensure_storage():
             return
 
