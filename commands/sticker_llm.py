@@ -102,12 +102,20 @@ class StickerLLMMixin(StickerBaseMixin):
         )
 
         if self._is_full_intercept_enabled() and all_matches:
-            await self._send_split_messages(event, full_text, is_streaming)
-            if result:
-                result.chain = []
-            event.set_extra("_streaming_finished", True)
-            event.stop_event()
-            return
+            missing_shortcodes = []
+            for match in all_matches:
+                shortcode = match.group(1)
+                if not self._find_sticker_by_shortcode(shortcode):
+                    missing_shortcodes.append(shortcode)
+            if not missing_shortcodes:
+                await self._send_split_messages(event, full_text, is_streaming)
+                if result:
+                    result.chain = []
+                event.set_extra("_streaming_finished", True)
+                return
+            logger.debug(
+                f"存在未匹配短码，跳过分段发送：{missing_shortcodes}"
+            )
 
         max_stickers = self._get_max_stickers_per_reply()
         found_stickers: dict[str, any] = {}
