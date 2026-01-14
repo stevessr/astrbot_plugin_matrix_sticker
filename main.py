@@ -198,9 +198,3 @@ class MatrixStickerPlugin(
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
         """注入 sticker 短码到 LLM 提示词"""
         self.hook_inject_sticker_prompt(event, req)
-
-    @filter.on_waiting_llm_request()
-    async def on_waiting_llm_request(self, event: AstrMessageEvent):
-        """全拦截模式禁用流式，避免重复发送"""
-        if self.config.get("matrix_sticker_full_intercept", False):
-            event.set_extra("enable_streaming", False)
