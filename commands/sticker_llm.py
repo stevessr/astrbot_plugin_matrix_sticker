@@ -12,7 +12,7 @@ from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
 from .base import StickerBaseMixin
 
-SHORTCODE_PATTERN = re.compile(r":([a-zA-Z0-9_-]+):")
+SHORTCODE_PATTERN = re.compile(r":([^:\s]+):")
 
 STICKER_PROMPT_TEMPLATE = """
 ## 可用的表情贴纸
@@ -193,6 +193,7 @@ class StickerLLMMixin(StickerBaseMixin):
         if modified:
             if is_streaming and found_stickers:
                 unique_stickers = list(found_stickers.values())
+                reply_id = self._get_reply_event_id(event)
                 logger.info(
                     f"流式输出完成，发送 {len(unique_stickers)} 个去重后的 sticker"
                 )
@@ -201,7 +202,11 @@ class StickerLLMMixin(StickerBaseMixin):
                         logger.info(
                             f"发送 sticker {i + 1}/{len(unique_stickers)}: {sticker.body if hasattr(sticker, 'body') else sticker}"
                         )
-                        chain = MessageChain([sticker])
+                        chain_comps = []
+                        if reply_id:
+                            chain_comps.append(Reply(id=reply_id))
+                        chain_comps.append(sticker)
+                        chain = MessageChain(chain_comps)
                         logger.info(f"创建 MessageChain: {chain}")
                         send_result = await event.send(chain)
                         logger.info(f"发送结果：{send_result}")
