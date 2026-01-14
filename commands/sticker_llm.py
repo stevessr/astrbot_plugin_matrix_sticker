@@ -6,7 +6,7 @@ import re
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Plain, Reply
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
@@ -31,6 +31,17 @@ STICKER_PROMPT_TEMPLATE = """
 
 class StickerLLMMixin(StickerBaseMixin):
     """Sticker LLM hook 逻辑"""
+
+    def _get_reply_event_id(self, event: AstrMessageEvent) -> str | None:
+        message_obj = getattr(event, "message_obj", None)
+        if not message_obj:
+            return None
+        reply_id = getattr(message_obj, "message_id", None)
+        if not reply_id and hasattr(message_obj, "raw_message"):
+            reply_id = getattr(message_obj.raw_message, "event_id", None)
+        if reply_id:
+            return str(reply_id)
+        return None
 
     def _is_full_intercept_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
@@ -196,6 +207,7 @@ class StickerLLMMixin(StickerBaseMixin):
         max_stickers = self._get_max_stickers_per_reply()
         found_stickers: dict[str, any] = {}
         segments: list[Plain | any] = []
+        reply_id = self._get_reply_event_id(event)
 
         last_end = 0
         for match in SHORTCODE_PATTERN.finditer(full_text):
@@ -231,7 +243,11 @@ class StickerLLMMixin(StickerBaseMixin):
 
         for segment in segments:
             try:
-                chain = MessageChain([segment])
+                chain_comps = []
+                if reply_id:
+                    chain_comps.append(Reply(id=reply_id))
+                chain_comps.append(segment)
+                chain = MessageChain(chain_comps)
                 await event.send(chain)
             except Exception as e:
                 logger.error(f"发送分段消息失败：{e}", exc_info=True)
