@@ -106,6 +106,7 @@ class StickerLLMMixin(StickerBaseMixin):
             if result:
                 result.chain = []
             event.set_extra("_streaming_finished", True)
+            event.stop_event()
             return
 
         max_stickers = self._get_max_stickers_per_reply()
