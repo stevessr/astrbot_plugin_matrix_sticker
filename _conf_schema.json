@@ -10,5 +10,11 @@
     "type": "bool",
     "hint": "开启后会把回复按 :shortcode: 分段发送，短码会转为 sticker；需要 Matrix 适配器启用流式发送禁用编辑",
     "default": false
+  },
+  "matrix_sticker_prompt_limit": {
+    "description": "注入 LLM 提示词的 sticker 数量上限",
+    "type": "int",
+    "hint": "控制向 LLM 系统提示词中注入多少个可用 sticker 短码",
+    "default": 50
   }
 }

@@ -58,6 +58,15 @@ class StickerLLMMixin(StickerBaseMixin):
             return None
         return value
 
+    def _get_prompt_sticker_limit(self) -> int:
+        config = getattr(self, "config", None) or {}
+        value = config.get("matrix_sticker_prompt_limit", 50)
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return 50
+        return max(1, value)
+
     def hook_cache_llm_response(
         self, event: AstrMessageEvent, response: LLMResponse | None
     ):
@@ -274,12 +283,14 @@ class StickerLLMMixin(StickerBaseMixin):
 
     def hook_inject_sticker_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """Inject available sticker shortcodes into LLM prompt."""
+        if event.platform_meta.name != "matrix":
+            return
         if self._is_full_intercept_enabled():
             event.set_extra("enable_streaming", False)
         if not self._ensure_storage():
             return
 
-        stickers = self._storage.list_stickers(limit=50)
+        stickers = self._storage.list_stickers(limit=self._get_prompt_sticker_limit())
         if not stickers:
             return
 
