@@ -23,9 +23,9 @@ class StickerManageMixin(StickerBaseMixin):
 /sticker sync - 同步当前房间的 sticker 包
 
 房间表情管理（Matrix 专用）：
-/sticker addroom <shortcode> - 添加引用图片为房间表情
-/sticker removeroom <shortcode> - 移除房间表情
-/sticker roomlist - 列出当前房间的自定义表情
+/sticker addroom <shortcode> [pack] - 添加引用图片为房间表情（pack 为表情包名称）
+/sticker removeroom <shortcode> [pack] - 移除房间表情
+/sticker roomlist [pack] - 列出当前房间的自定义表情
 
 别名管理：
 /sticker_alias add <id> <alias> - 添加别名短码

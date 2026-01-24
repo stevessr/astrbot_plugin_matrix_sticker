@@ -105,8 +105,9 @@ class MatrixStickerPlugin(
         elif subcommand == "addroom":
             if len(args) < 3:
                 yield event.plain_result(
-                    "用法：/sticker addroom <shortcode>\n"
-                    "请先引用一条包含图片的消息，然后发送此命令"
+                    "用法：/sticker addroom <shortcode> [pack]\n"
+                    "请先引用一条包含图片的消息，然后发送此命令\n"
+                    "pack 为可选的表情包名称"
                 )
                 return
             shortcode = args[2]
@@ -116,7 +117,7 @@ class MatrixStickerPlugin(
 
         elif subcommand == "removeroom":
             if len(args) < 3:
-                yield event.plain_result("用法：/sticker removeroom <shortcode>")
+                yield event.plain_result("用法：/sticker removeroom <shortcode> [pack]")
                 return
             shortcode = args[2]
             state_key = args[3] if len(args) > 3 else ""
