@@ -3,10 +3,11 @@ Matrix sticker LLM mixin - LLM 相关 hook 逻辑
 """
 
 import re
+from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Plain, Reply
+from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
@@ -67,6 +68,12 @@ class StickerLLMMixin(StickerBaseMixin):
             return bool(config.get("matrix_sticker_emoji_shortcodes"))
         return bool(config.get("matrix_emoji_shortcodes", False))
 
+    def _is_other_platforms_extension_enabled(self) -> bool:
+        config = getattr(self, "config", None) or {}
+        if "matrix_sticker_cross_platform" in config:
+            return bool(config.get("matrix_sticker_cross_platform"))
+        return bool(config.get("matrix_sticker_enable_other_platforms", False))
+
     def _get_shortcode_pattern(self) -> re.Pattern[str]:
         if self._is_shortcode_strict_mode():
             return STRICT_SHORTCODE_PATTERN
@@ -103,6 +110,50 @@ class StickerLLMMixin(StickerBaseMixin):
         if emoji_modified:
             result.chain = converted_chain
             logger.debug("已替换消息中的 emoji 短码")
+
+    def _resolve_sticker_local_path(self, sticker) -> str | None:
+        storage = getattr(self, "_storage", None)
+        sticker_id = getattr(sticker, "sticker_id", None)
+        if not storage or not sticker_id:
+            return None
+
+        index = getattr(storage, "_index", None)
+        if not isinstance(index, dict):
+            return None
+
+        meta = index.get(sticker_id)
+        local_path = getattr(meta, "local_path", None) if meta else None
+        if local_path and Path(local_path).exists():
+            return str(local_path)
+        return None
+
+    def _build_image_component_from_sticker(self, sticker) -> Image | None:
+        try:
+            local_path = self._resolve_sticker_local_path(sticker)
+            if local_path:
+                return Image.fromFileSystem(local_path)
+
+            sticker_url = str(getattr(sticker, "url", "") or "")
+            if not sticker_url:
+                return None
+
+            if sticker_url.startswith("mxc://"):
+                logger.debug(f"Skip mxc sticker without local cache: {sticker_url}")
+                return None
+
+            if sticker_url.startswith("http://") or sticker_url.startswith("https://"):
+                return Image.fromURL(sticker_url)
+
+            if sticker_url.startswith("file:///") or sticker_url.startswith("base64://"):
+                return Image(file=sticker_url)
+
+            if Path(sticker_url).exists():
+                return Image.fromFileSystem(sticker_url)
+
+            return Image(file=sticker_url)
+        except Exception as e:
+            logger.debug(f"Convert sticker to image failed: {e}")
+            return None
 
     def _get_max_stickers_per_reply(self) -> int | None:
         config = getattr(self, "config", None) or {}
@@ -141,8 +192,11 @@ class StickerLLMMixin(StickerBaseMixin):
             logger.debug("没有消息结果或消息链为空")
             return
 
-        # Non-Matrix platforms only apply emoji shortcode conversion.
-        if event.platform_meta.name != "matrix":
+        platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
+        is_matrix_platform = platform_name == "matrix"
+        extension_enabled = self._is_other_platforms_extension_enabled()
+
+        if not is_matrix_platform and not extension_enabled:
             self._convert_emoji_shortcodes_in_result(result)
             return
 
@@ -174,7 +228,7 @@ class StickerLLMMixin(StickerBaseMixin):
             f"在文本中找到 {len(all_matches)} 个短码匹配：{[m.group(1) for m in all_matches]}"
         )
 
-        if self._is_full_intercept_enabled() and all_matches:
+        if is_matrix_platform and self._is_full_intercept_enabled() and all_matches:
             missing_shortcodes = []
             for match in all_matches:
                 shortcode = match.group(1)
@@ -216,6 +270,16 @@ class StickerLLMMixin(StickerBaseMixin):
                         continue
 
                     sticker_id = getattr(sticker, "sticker_id", None) or sticker.body
+                    replacement_component = sticker
+                    if not is_matrix_platform:
+                        replacement_component = self._build_image_component_from_sticker(
+                            sticker
+                        )
+                        if replacement_component is None:
+                            logger.debug(
+                                f"无法将短码 '{shortcode}' 对应 sticker 转为图片组件"
+                            )
+                            continue
 
                     if match.start() > last_end:
                         before_text = text[last_end : match.start()]
@@ -229,13 +293,13 @@ class StickerLLMMixin(StickerBaseMixin):
                     )
 
                     if within_limit:
-                        if is_streaming:
+                        if is_streaming and is_matrix_platform:
                             if sticker_id not in found_stickers:
                                 found_stickers[sticker_id] = sticker
                         else:
                             if sticker_id not in found_stickers:
-                                new_chain.append(sticker)
-                                found_stickers[sticker_id] = sticker
+                                new_chain.append(replacement_component)
+                                found_stickers[sticker_id] = replacement_component
                         modified = True
                         component_modified = True
                     else:
@@ -260,7 +324,7 @@ class StickerLLMMixin(StickerBaseMixin):
         )
 
         if modified:
-            if is_streaming and found_stickers:
+            if is_matrix_platform and is_streaming and found_stickers:
                 unique_stickers = list(found_stickers.values())
                 reply_id = self._get_reply_event_id(event)
                 logger.info(
@@ -346,9 +410,11 @@ class StickerLLMMixin(StickerBaseMixin):
 
     def hook_inject_sticker_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """Inject available sticker shortcodes into LLM prompt."""
-        if event.platform_meta.name != "matrix":
+        platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
+        is_matrix_platform = platform_name == "matrix"
+        if not is_matrix_platform and not self._is_other_platforms_extension_enabled():
             return
-        if self._is_full_intercept_enabled():
+        if is_matrix_platform and self._is_full_intercept_enabled():
             event.set_extra("enable_streaming", False)
         if not self._ensure_storage():
             return

@@ -17,6 +17,12 @@
     "hint": "控制向 LLM 系统提示词中注入多少个可用 sticker 短码",
     "default": 50
   },
+  "matrix_sticker_enable_other_platforms": {
+    "description": "在非 Matrix 平台启用 Sticker 扩展",
+    "type": "bool",
+    "hint": "开启后会在非 Matrix 平台注入 Sticker 短码提示，并将 :shortcode: 转为图片组件发送",
+    "default": false
+  },
   "matrix_sticker_auto_sync": {
     "description": "自动同步 Sticker 包",
     "type": "bool",
