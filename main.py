@@ -44,6 +44,7 @@ class MatrixStickerPlugin(
         self._StickerInfo = None
         self._auto_sync_task: asyncio.Task | None = None
         self._auto_sync_lock: asyncio.Lock | None = None
+        self._startup_sync_task: asyncio.Task | None = None
         self._user_synced_platform_ids: set[str] = set()
         self._availability_reset_platform_ids: set[str] = set()
 
@@ -93,10 +94,20 @@ class MatrixStickerPlugin(
     def _platform_sync_key(self, platform) -> str:
         return str(getattr(platform, "client_self_id", "") or id(platform))
 
+    def _is_client_ready(self, client) -> bool:
+        return bool(
+            client
+            and getattr(client, "user_id", None)
+            and getattr(client, "access_token", None)
+        )
+
     async def _sync_platform_stickers(self, platform) -> None:
         syncer = getattr(platform, "sticker_syncer", None)
         client = getattr(platform, "client", None)
         if not syncer or not client:
+            return
+
+        if not self._is_client_ready(client):
             return
 
         platform_key = self._platform_sync_key(platform)
@@ -147,6 +158,27 @@ class MatrixStickerPlugin(
         async with self._auto_sync_lock:
             for platform in self._iter_matrix_platforms():
                 await self._sync_platform_stickers(platform)
+
+    async def _startup_sync_when_ready(self) -> None:
+        for _ in range(30):
+            for platform in self._iter_matrix_platforms():
+                client = getattr(platform, "client", None)
+                if self._is_client_ready(client):
+                    await self._sync_all_platform_stickers_once()
+                    return
+            await asyncio.sleep(1)
+
+        await self._sync_all_platform_stickers_once()
+
+    def _ensure_startup_sync_task(self) -> None:
+        if not self._is_sticker_auto_sync_enabled():
+            return
+        if self._startup_sync_task and not self._startup_sync_task.done():
+            return
+        self._startup_sync_task = asyncio.create_task(
+            self._startup_sync_when_ready(),
+            name="matrix-sticker-startup-sync",
+        )
 
     async def _auto_sync_loop(self) -> None:
         while True:
@@ -335,10 +367,18 @@ class MatrixStickerPlugin(
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
-        """Run one sync pass after a platform is loaded."""
-        await self._sync_all_platform_stickers_once()
+        """Run one startup sync pass after Matrix login is ready."""
+        self._ensure_startup_sync_task()
 
     async def terminate(self):
+        if self._startup_sync_task and not self._startup_sync_task.done():
+            self._startup_sync_task.cancel()
+            try:
+                await self._startup_sync_task
+            except asyncio.CancelledError:
+                pass
+        self._startup_sync_task = None
+
         if self._auto_sync_task and not self._auto_sync_task.done():
             self._auto_sync_task.cancel()
             try:
