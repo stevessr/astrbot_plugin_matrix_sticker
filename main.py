@@ -5,6 +5,9 @@ Matrix Sticker 管理插件
 依赖 astrbot_plugin_matrix_adapter 的 sticker 模块
 """
 
+import asyncio
+
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
@@ -14,6 +17,7 @@ from .commands import (
     StickerLLMMixin,
     StickerManageMixin,
 )
+from .emoji_shortcodes import configure_emoji_shortcodes, warmup_emoji_shortcodes
 
 
 @register(
@@ -30,13 +34,133 @@ class MatrixStickerPlugin(
 ):
     """Matrix Sticker 管理插件"""
 
+    _AUTO_SYNC_INTERVAL_SECONDS = 180
+
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context, config)
         self.config = config or {}
         self._storage = None
         self._Sticker = None
         self._StickerInfo = None
+        self._auto_sync_task: asyncio.Task | None = None
+        self._auto_sync_lock: asyncio.Lock | None = None
+        self._user_synced_platform_ids: set[str] = set()
+        self._availability_reset_platform_ids: set[str] = set()
+
+        configure_emoji_shortcodes(
+            enabled=self._is_emoji_shortcodes_enabled(),
+            strict_mode=self._is_shortcode_strict_mode(),
+        )
+        warmup_emoji_shortcodes(fetch_remote=False)
+
         self._init_sticker_module()
+
+    def _is_emoji_shortcodes_enabled(self) -> bool:
+        if "matrix_sticker_emoji_shortcodes" in self.config:
+            return bool(self.config.get("matrix_sticker_emoji_shortcodes"))
+        return bool(self.config.get("matrix_emoji_shortcodes", False))
+
+    def _is_shortcode_strict_mode(self) -> bool:
+        if "matrix_sticker_shortcode_strict_mode" in self.config:
+            return bool(self.config.get("matrix_sticker_shortcode_strict_mode"))
+        return bool(self.config.get("matrix_emoji_shortcodes_strict_mode", False))
+
+    def _is_sticker_auto_sync_enabled(self) -> bool:
+        return bool(self.config.get("matrix_sticker_auto_sync", False))
+
+    def _is_sticker_sync_user_emotes_enabled(self) -> bool:
+        return bool(self.config.get("matrix_sticker_sync_user_emotes", False))
+
+    def _iter_matrix_platforms(self):
+        for platform in self.context.platform_manager.get_insts():
+            if not hasattr(platform, "sticker_syncer") or not hasattr(
+                platform, "client"
+            ):
+                continue
+            try:
+                meta = platform.meta()
+                if getattr(meta, "name", "") != "matrix":
+                    continue
+            except Exception:
+                if not hasattr(platform, "_matrix_config"):
+                    continue
+            yield platform
+
+    def _platform_sync_key(self, platform) -> str:
+        return str(getattr(platform, "client_self_id", "") or id(platform))
+
+    async def _sync_platform_stickers(self, platform) -> None:
+        syncer = getattr(platform, "sticker_syncer", None)
+        client = getattr(platform, "client", None)
+        if not syncer or not client:
+            return
+
+        platform_key = self._platform_sync_key(platform)
+
+        if platform_key not in self._availability_reset_platform_ids:
+            try:
+                if hasattr(syncer, "reset_available"):
+                    syncer.reset_available()
+                self._availability_reset_platform_ids.add(platform_key)
+            except Exception as e:
+                logger.debug(
+                    f"Reset sticker availability failed for {platform_key}: {e}"
+                )
+
+        if (
+            self._is_sticker_sync_user_emotes_enabled()
+            and platform_key not in self._user_synced_platform_ids
+        ):
+            try:
+                user_count = await syncer.sync_user_stickers()
+                if user_count > 0:
+                    logger.info(f"Synced {user_count} user stickers on {platform_key}")
+                self._user_synced_platform_ids.add(platform_key)
+            except Exception as e:
+                logger.debug(f"Sync user stickers failed for {platform_key}: {e}")
+
+        try:
+            joined_rooms = await client.get_joined_rooms()
+        except Exception as e:
+            logger.debug(f"Load joined rooms failed for {platform_key}: {e}")
+            return
+
+        total_synced = 0
+        for room_id in joined_rooms:
+            try:
+                total_synced += await syncer.sync_room_stickers(room_id)
+            except Exception as room_e:
+                logger.debug(f"Sync room stickers failed for {room_id}: {room_e}")
+
+        if total_synced > 0:
+            logger.info(f"Synced {total_synced} room stickers on {platform_key}")
+
+    async def _sync_all_platform_stickers_once(self) -> None:
+        if not self._is_sticker_auto_sync_enabled():
+            return
+        if self._auto_sync_lock is None:
+            self._auto_sync_lock = asyncio.Lock()
+        async with self._auto_sync_lock:
+            for platform in self._iter_matrix_platforms():
+                await self._sync_platform_stickers(platform)
+
+    async def _auto_sync_loop(self) -> None:
+        while True:
+            try:
+                await self._sync_all_platform_stickers_once()
+            except Exception as e:
+                logger.debug(f"Auto sync loop failed: {e}")
+            await asyncio.sleep(self._AUTO_SYNC_INTERVAL_SECONDS)
+
+    def _ensure_auto_sync_task(self) -> None:
+        if not self._is_sticker_auto_sync_enabled():
+            return
+        if self._auto_sync_task and not self._auto_sync_task.done():
+            return
+        self._auto_sync_task = asyncio.create_task(
+            self._auto_sync_loop(),
+            name="matrix-sticker-auto-sync",
+        )
 
     # ========== Command Bindings ==========
     # 装饰器必须定义在 main.py 中，逻辑委托给 mixin
@@ -199,3 +323,22 @@ class MatrixStickerPlugin(
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
         """注入 sticker 短码到 LLM 提示词"""
         self.hook_inject_sticker_prompt(event, req)
+
+    @filter.on_astrbot_loaded()
+    async def on_astrbot_loaded(self):
+        """Start auto-sync task when enabled."""
+        self._ensure_auto_sync_task()
+
+    @filter.on_platform_loaded()
+    async def on_platform_loaded(self):
+        """Run one sync pass after a platform is loaded."""
+        await self._sync_all_platform_stickers_once()
+
+    async def terminate(self):
+        if self._auto_sync_task and not self._auto_sync_task.done():
+            self._auto_sync_task.cancel()
+            try:
+                await self._auto_sync_task
+            except asyncio.CancelledError:
+                pass
+        self._auto_sync_task = None

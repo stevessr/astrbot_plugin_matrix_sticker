@@ -10,9 +10,13 @@ from astrbot.api.message_components import Plain, Reply
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
+from ..emoji_shortcodes import convert_emoji_shortcodes
 from .base import StickerBaseMixin
 
-SHORTCODE_PATTERN = re.compile(r":([^:\s]+):")
+STRICT_SHORTCODE_PATTERN = re.compile(r"(?<!\\)(?<![A-Za-z0-9_]):([A-Za-z0-9_+\-.]+):")
+RELAXED_SHORTCODE_PATTERN = re.compile(
+    r"(?<!\\)(?<![A-Za-z0-9_]):([A-Za-z0-9_+\-.]+):?(?=$|[^A-Za-z0-9_+\-.])"
+)
 
 STICKER_PROMPT_TEMPLATE = """
 ## 可用的表情贴纸
@@ -46,6 +50,47 @@ class StickerLLMMixin(StickerBaseMixin):
     def _is_full_intercept_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
         return bool(config.get("matrix_sticker_full_intercept", False))
+
+    def _is_shortcode_strict_mode(self) -> bool:
+        config = getattr(self, "config", None) or {}
+        if "matrix_sticker_shortcode_strict_mode" in config:
+            return bool(config.get("matrix_sticker_shortcode_strict_mode"))
+        return bool(config.get("matrix_emoji_shortcodes_strict_mode", False))
+
+    def _is_emoji_shortcodes_enabled(self) -> bool:
+        config = getattr(self, "config", None) or {}
+        if "matrix_sticker_emoji_shortcodes" in config:
+            return bool(config.get("matrix_sticker_emoji_shortcodes"))
+        return bool(config.get("matrix_emoji_shortcodes", False))
+
+    def _get_shortcode_pattern(self) -> re.Pattern[str]:
+        if self._is_shortcode_strict_mode():
+            return STRICT_SHORTCODE_PATTERN
+        return RELAXED_SHORTCODE_PATTERN
+
+    def _convert_emoji_shortcodes_in_chain(self, chain: list) -> tuple[list, bool]:
+        if not self._is_emoji_shortcodes_enabled():
+            return chain, False
+
+        converted_chain = []
+        modified = False
+        for component in chain:
+            if isinstance(component, Plain):
+                source_text = component.text or ""
+                converted_text = convert_emoji_shortcodes(source_text)
+                if converted_text != source_text:
+                    converted_chain.append(
+                        Plain(
+                            text=converted_text,
+                            convert=getattr(component, "convert", True),
+                        )
+                    )
+                    modified = True
+                else:
+                    converted_chain.append(component)
+            else:
+                converted_chain.append(component)
+        return converted_chain, modified
 
     def _get_max_stickers_per_reply(self) -> int | None:
         config = getattr(self, "config", None) or {}
@@ -105,7 +150,8 @@ class StickerLLMMixin(StickerBaseMixin):
                 result.chain = [Plain(cached_text)]
                 full_text = cached_text
 
-        all_matches = list(SHORTCODE_PATTERN.finditer(full_text))
+        shortcode_pattern = self._get_shortcode_pattern()
+        all_matches = list(shortcode_pattern.finditer(full_text))
         logger.debug(
             f"在文本中找到 {len(all_matches)} 个短码匹配：{[m.group(1) for m in all_matches]}"
         )
@@ -122,9 +168,7 @@ class StickerLLMMixin(StickerBaseMixin):
                     result.chain = []
                 event.set_extra("_streaming_finished", True)
                 return
-            logger.debug(
-                f"存在未匹配短码，跳过分段发送：{missing_shortcodes}"
-            )
+            logger.debug(f"存在未匹配短码，跳过分段发送：{missing_shortcodes}")
 
         max_stickers = self._get_max_stickers_per_reply()
         found_stickers: dict[str, any] = {}
@@ -134,7 +178,7 @@ class StickerLLMMixin(StickerBaseMixin):
         for component in result.chain:
             if isinstance(component, Plain):
                 text = component.text
-                matches = list(SHORTCODE_PATTERN.finditer(text))
+                matches = list(shortcode_pattern.finditer(text))
 
                 if not matches:
                     new_chain.append(component)
@@ -153,9 +197,7 @@ class StickerLLMMixin(StickerBaseMixin):
                     if not sticker:
                         continue
 
-                    sticker_id = (
-                        getattr(sticker, "sticker_id", None) or sticker.body
-                    )
+                    sticker_id = getattr(sticker, "sticker_id", None) or sticker.body
 
                     if match.start() > last_end:
                         before_text = text[last_end : match.start()]
@@ -221,9 +263,28 @@ class StickerLLMMixin(StickerBaseMixin):
                         logger.info(f"发送结果：{send_result}")
                     except Exception as e:
                         logger.error(f"发送 sticker 失败：{e}", exc_info=True)
+                converted_chain, emoji_modified = (
+                    self._convert_emoji_shortcodes_in_chain(result.chain)
+                )
+                if emoji_modified:
+                    result.chain = converted_chain
+                    logger.debug("已替换消息中的 emoji 短码")
             else:
                 result.chain = new_chain
                 logger.debug("已替换消息中的 sticker 短码")
+                converted_chain, emoji_modified = (
+                    self._convert_emoji_shortcodes_in_chain(result.chain)
+                )
+                if emoji_modified:
+                    result.chain = converted_chain
+                    logger.debug("已替换消息中的 emoji 短码")
+        else:
+            converted_chain, emoji_modified = self._convert_emoji_shortcodes_in_chain(
+                result.chain
+            )
+            if emoji_modified:
+                result.chain = converted_chain
+                logger.debug("已替换消息中的 emoji 短码")
 
     async def _send_split_messages(
         self, event: AstrMessageEvent, full_text: str, is_streaming: bool
@@ -234,7 +295,8 @@ class StickerLLMMixin(StickerBaseMixin):
         reply_id = self._get_reply_event_id(event)
 
         last_end = 0
-        for match in SHORTCODE_PATTERN.finditer(full_text):
+        shortcode_pattern = self._get_shortcode_pattern()
+        for match in shortcode_pattern.finditer(full_text):
             if match.start() > last_end:
                 before_text = full_text[last_end : match.start()]
                 if before_text:
