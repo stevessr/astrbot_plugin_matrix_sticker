@@ -37,6 +37,20 @@ STICKER_PROMPT_TEMPLATE = """
 class StickerLLMMixin(StickerBaseMixin):
     """Sticker LLM hook 逻辑"""
 
+    _DEFAULT_LLM_MODE = "inject"
+    _SUPPORTED_LLM_MODES = {"inject", "fc", "hybrid"}
+    _LLM_MODE_ALIASES = {
+        "inject": "inject",
+        "injection": "inject",
+        "runtime": "inject",
+        "prompt": "inject",
+        "fc": "fc",
+        "tool": "fc",
+        "tools": "fc",
+        "hybrid": "hybrid",
+        "both": "hybrid",
+    }
+
     def _get_reply_event_id(self, event: AstrMessageEvent) -> str | None:
         message_obj = getattr(event, "message_obj", None)
         if not message_obj:
@@ -67,6 +81,28 @@ class StickerLLMMixin(StickerBaseMixin):
         if "matrix_sticker_emoji_shortcodes" in config:
             return bool(config.get("matrix_sticker_emoji_shortcodes"))
         return bool(config.get("matrix_emoji_shortcodes", False))
+
+    def _normalize_llm_mode(self, mode: str | None) -> str:
+        raw = str(mode or "").strip().lower()
+        normalized = self._LLM_MODE_ALIASES.get(raw, raw)
+        if normalized in self._SUPPORTED_LLM_MODES:
+            return normalized
+        return self._DEFAULT_LLM_MODE
+
+    def _get_llm_mode(self) -> str:
+        config = getattr(self, "config", None) or {}
+        mode = config.get("matrix_sticker_llm_mode")
+        if mode is not None:
+            return self._normalize_llm_mode(mode)
+        if bool(config.get("matrix_sticker_fc_mode", False)):
+            return "fc"
+        return self._DEFAULT_LLM_MODE
+
+    def _is_runtime_injection_enabled(self) -> bool:
+        return self._get_llm_mode() in {"inject", "hybrid"}
+
+    def _is_fc_mode_enabled(self) -> bool:
+        return self._get_llm_mode() in {"fc", "hybrid"}
 
     def _is_other_platforms_extension_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
@@ -190,6 +226,10 @@ class StickerLLMMixin(StickerBaseMixin):
         result = event.get_result()
         if result is None or not result.chain:
             logger.debug("没有消息结果或消息链为空")
+            return
+
+        if not self._is_runtime_injection_enabled():
+            self._convert_emoji_shortcodes_in_result(result)
             return
 
         platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
@@ -410,6 +450,9 @@ class StickerLLMMixin(StickerBaseMixin):
 
     def hook_inject_sticker_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """Inject available sticker shortcodes into LLM prompt."""
+        if not self._is_runtime_injection_enabled():
+            return
+
         platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
         is_matrix_platform = platform_name == "matrix"
         if not is_matrix_platform and not self._is_other_platforms_extension_enabled():
