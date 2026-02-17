@@ -53,12 +53,16 @@ class StickerLLMMixin(StickerBaseMixin):
 
     def _is_shortcode_strict_mode(self) -> bool:
         config = getattr(self, "config", None) or {}
+        if "emoji_shortcodes_strict_mode" in config:
+            return bool(config.get("emoji_shortcodes_strict_mode"))
         if "matrix_sticker_shortcode_strict_mode" in config:
             return bool(config.get("matrix_sticker_shortcode_strict_mode"))
         return bool(config.get("matrix_emoji_shortcodes_strict_mode", False))
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
+        if "emoji_shortcodes" in config:
+            return bool(config.get("emoji_shortcodes"))
         if "matrix_sticker_emoji_shortcodes" in config:
             return bool(config.get("matrix_sticker_emoji_shortcodes"))
         return bool(config.get("matrix_emoji_shortcodes", False))
@@ -92,6 +96,14 @@ class StickerLLMMixin(StickerBaseMixin):
                 converted_chain.append(component)
         return converted_chain, modified
 
+    def _convert_emoji_shortcodes_in_result(self, result) -> None:
+        converted_chain, emoji_modified = self._convert_emoji_shortcodes_in_chain(
+            result.chain
+        )
+        if emoji_modified:
+            result.chain = converted_chain
+            logger.debug("已替换消息中的 emoji 短码")
+
     def _get_max_stickers_per_reply(self) -> int | None:
         config = getattr(self, "config", None) or {}
         value = config.get("matrix_sticker_max_per_reply", 5)
@@ -124,13 +136,19 @@ class StickerLLMMixin(StickerBaseMixin):
 
     async def hook_replace_shortcodes(self, event: AstrMessageEvent):
         """Replace :shortcode: with sticker components."""
-        if not self._ensure_storage():
-            logger.debug("Sticker storage 未初始化，跳过短码替换")
-            return
-
         result = event.get_result()
         if result is None or not result.chain:
             logger.debug("没有消息结果或消息链为空")
+            return
+
+        # Non-Matrix platforms only apply emoji shortcode conversion.
+        if event.platform_meta.name != "matrix":
+            self._convert_emoji_shortcodes_in_result(result)
+            return
+
+        if not self._ensure_storage():
+            logger.debug("Sticker storage 未初始化，跳过 sticker 短码替换")
+            self._convert_emoji_shortcodes_in_result(result)
             return
 
         result_type = getattr(result, "result_content_type", None)
@@ -263,28 +281,11 @@ class StickerLLMMixin(StickerBaseMixin):
                         logger.info(f"发送结果：{send_result}")
                     except Exception as e:
                         logger.error(f"发送 sticker 失败：{e}", exc_info=True)
-                converted_chain, emoji_modified = (
-                    self._convert_emoji_shortcodes_in_chain(result.chain)
-                )
-                if emoji_modified:
-                    result.chain = converted_chain
-                    logger.debug("已替换消息中的 emoji 短码")
             else:
                 result.chain = new_chain
                 logger.debug("已替换消息中的 sticker 短码")
-                converted_chain, emoji_modified = (
-                    self._convert_emoji_shortcodes_in_chain(result.chain)
-                )
-                if emoji_modified:
-                    result.chain = converted_chain
-                    logger.debug("已替换消息中的 emoji 短码")
-        else:
-            converted_chain, emoji_modified = self._convert_emoji_shortcodes_in_chain(
-                result.chain
-            )
-            if emoji_modified:
-                result.chain = converted_chain
-                logger.debug("已替换消息中的 emoji 短码")
+
+        self._convert_emoji_shortcodes_in_result(result)
 
     async def _send_split_messages(
         self, event: AstrMessageEvent, full_text: str, is_streaming: bool

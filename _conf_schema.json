@@ -29,13 +29,13 @@
     "hint": "是否同步用户级别 Sticker 包（im.ponies.user_emotes）",
     "default": false
   },
-  "matrix_sticker_emoji_shortcodes": {
+  "emoji_shortcodes": {
     "description": "启用 Emoji 短码转换",
     "type": "bool",
-    "hint": "启用后自动将未命中 sticker 的 :smile:、:thumbsup: 等短码转换为 Emoji",
+    "hint": "启用后在所有适配器中将 Emoji 短码（如 :smile:、:thumbsup:）转换为 Unicode Emoji",
     "default": false
   },
-  "matrix_sticker_shortcode_strict_mode": {
+  "emoji_shortcodes_strict_mode": {
     "description": "短码严格模式",
     "type": "bool",
     "hint": "开启后仅识别严格 :shortcode:；关闭后也识别 :shortcode（无结尾冒号）",

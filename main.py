@@ -56,11 +56,15 @@ class MatrixStickerPlugin(
         self._init_sticker_module()
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
+        if "emoji_shortcodes" in self.config:
+            return bool(self.config.get("emoji_shortcodes"))
         if "matrix_sticker_emoji_shortcodes" in self.config:
             return bool(self.config.get("matrix_sticker_emoji_shortcodes"))
         return bool(self.config.get("matrix_emoji_shortcodes", False))
 
     def _is_shortcode_strict_mode(self) -> bool:
+        if "emoji_shortcodes_strict_mode" in self.config:
+            return bool(self.config.get("emoji_shortcodes_strict_mode"))
         if "matrix_sticker_shortcode_strict_mode" in self.config:
             return bool(self.config.get("matrix_sticker_shortcode_strict_mode"))
         return bool(self.config.get("matrix_emoji_shortcodes_strict_mode", False))

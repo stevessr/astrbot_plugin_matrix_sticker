@@ -58,8 +58,8 @@ Matrix Sticker 管理插件，提供 sticker 保存、列表、发送与别名�
 - `matrix_sticker_full_intercept`：完全拦截回复并按 :shortcode: 分段发送，短码会转为 sticker；需要 Matrix 适配器开启流式发送禁用编辑（默认 false）。
 - `matrix_sticker_auto_sync`：自动同步房间 Sticker 包（默认 false）。
 - `matrix_sticker_sync_user_emotes`：同步用户级别 Sticker 包（默认 false）。
-- `matrix_sticker_emoji_shortcodes`：启用 Emoji 短码转换（默认 false）。
-- `matrix_sticker_shortcode_strict_mode`：短码严格模式。开启后仅识别 `:shortcode:`；关闭后也识别 `:shortcode`（默认 false）。
+- `emoji_shortcodes`：启用 Emoji 短码转换（对所有适配器生效，默认 false）。
+- `emoji_shortcodes_strict_mode`：短码严格模式。开启后仅识别 `:shortcode:`；关闭后也识别 `:shortcode`（默认 false）。
 
 # Warning
 已知问题：此插件会和分段回复冲突！导致回复逃逸出嘟文串
