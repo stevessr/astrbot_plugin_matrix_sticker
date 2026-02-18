@@ -212,16 +212,21 @@ class MatrixStickerPlugin(
             except Exception as e:
                 logger.debug(f"Save sticker config failed: {e}")
 
-    def _sync_fc_tools_activation(self) -> None:
-        enable_fc = self._is_fc_mode_enabled()
+    def _set_fc_tools_activation(self, enabled: bool) -> None:
         for tool_name in self._FC_TOOL_NAMES:
             try:
-                if enable_fc:
+                if enabled:
                     StarTools.activate_llm_tool(tool_name)
                 else:
                     StarTools.deactivate_llm_tool(tool_name)
             except Exception as e:
                 logger.debug(f"Sync sticker FC tool state failed for {tool_name}: {e}")
+
+    def _sync_fc_tools_activation(self) -> None:
+        self._set_fc_tools_activation(self._is_fc_mode_enabled())
+
+    def _cleanup_fc_tools_activation(self) -> None:
+        self._set_fc_tools_activation(False)
 
     def _set_llm_mode_runtime(self, mode: str, persist: bool = True) -> str:
         normalized = self._normalize_llm_mode(mode)
@@ -706,6 +711,8 @@ class MatrixStickerPlugin(
         self._ensure_startup_sync_task()
 
     async def terminate(self):
+        self._cleanup_fc_tools_activation()
+
         if self._startup_sync_task and not self._startup_sync_task.done():
             self._startup_sync_task.cancel()
             try:
