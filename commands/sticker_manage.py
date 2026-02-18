@@ -21,7 +21,7 @@ class StickerManageMixin(StickerBaseMixin):
 /sticker delete <id> - 删除 sticker
 /sticker stats - 显示统计信息
 /sticker sync - 同步当前房间的 sticker 包
-/sticker mode <inject|fc|hybrid> - 切换 LLM 模式（运行时注入/函数工具/混合）
+/sticker mode <on|off> - 开关 LLM 提示词注入（工具启停请在 WebUI 管理）
 
 房间表情管理（Matrix 专用）：
 /sticker addroom <shortcode> [pack] - 添加引用图片为房间表情（pack 为表情包名称）

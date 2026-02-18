@@ -37,18 +37,30 @@ STICKER_PROMPT_TEMPLATE = """
 class StickerLLMMixin(StickerBaseMixin):
     """Sticker LLM hook 逻辑"""
 
-    _DEFAULT_LLM_MODE = "inject"
-    _SUPPORTED_LLM_MODES = {"inject", "fc", "hybrid"}
-    _LLM_MODE_ALIASES = {
-        "inject": "inject",
-        "injection": "inject",
-        "runtime": "inject",
-        "prompt": "inject",
-        "fc": "fc",
-        "tool": "fc",
-        "tools": "fc",
-        "hybrid": "hybrid",
-        "both": "hybrid",
+    _DEFAULT_PROMPT_INJECTION_MODE = "on"
+    _SUPPORTED_PROMPT_INJECTION_MODES = {"on", "off"}
+    _PROMPT_INJECTION_MODE_ALIASES = {
+        "on": "on",
+        "enable": "on",
+        "enabled": "on",
+        "true": "on",
+        "1": "on",
+        "yes": "on",
+        "inject": "on",
+        "injection": "on",
+        "runtime": "on",
+        "prompt": "on",
+        "hybrid": "on",
+        "both": "on",
+        "off": "off",
+        "disable": "off",
+        "disabled": "off",
+        "false": "off",
+        "0": "off",
+        "no": "off",
+        "fc": "off",
+        "tool": "off",
+        "tools": "off",
     }
 
     def _get_reply_event_id(self, event: AstrMessageEvent) -> str | None:
@@ -82,27 +94,31 @@ class StickerLLMMixin(StickerBaseMixin):
             return bool(config.get("matrix_sticker_emoji_shortcodes"))
         return bool(config.get("matrix_emoji_shortcodes", False))
 
-    def _normalize_llm_mode(self, mode: str | None) -> str:
+    def _normalize_prompt_injection_mode(self, mode: str | None) -> str:
         raw = str(mode or "").strip().lower()
-        normalized = self._LLM_MODE_ALIASES.get(raw, raw)
-        if normalized in self._SUPPORTED_LLM_MODES:
+        normalized = self._PROMPT_INJECTION_MODE_ALIASES.get(raw, raw)
+        if normalized in self._SUPPORTED_PROMPT_INJECTION_MODES:
             return normalized
-        return self._DEFAULT_LLM_MODE
+        return self._DEFAULT_PROMPT_INJECTION_MODE
 
-    def _get_llm_mode(self) -> str:
+    def _get_prompt_injection_mode(self) -> str:
         config = getattr(self, "config", None) or {}
+        prompt_injection = config.get("matrix_sticker_prompt_injection")
+        if prompt_injection is not None:
+            if isinstance(prompt_injection, bool):
+                return "on" if prompt_injection else "off"
+            return self._normalize_prompt_injection_mode(prompt_injection)
+
         mode = config.get("matrix_sticker_llm_mode")
         if mode is not None:
-            return self._normalize_llm_mode(mode)
+            return self._normalize_prompt_injection_mode(mode)
+
         if bool(config.get("matrix_sticker_fc_mode", False)):
-            return "fc"
-        return self._DEFAULT_LLM_MODE
+            return "off"
+        return self._DEFAULT_PROMPT_INJECTION_MODE
 
     def _is_runtime_injection_enabled(self) -> bool:
-        return self._get_llm_mode() in {"inject", "hybrid"}
-
-    def _is_fc_mode_enabled(self) -> bool:
-        return self._get_llm_mode() in {"fc", "hybrid"}
+        return self._get_prompt_injection_mode() == "on"
 
     def _is_other_platforms_extension_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}

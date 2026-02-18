@@ -14,7 +14,7 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Reply
-from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.api.star import Context, Star, register
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
 from .commands import (
@@ -40,7 +40,6 @@ class MatrixStickerPlugin(
     """Matrix Sticker 管理插件"""
 
     _AUTO_SYNC_INTERVAL_SECONDS = 180
-    _FC_TOOL_NAMES = ("sticker_search", "sticker_send")
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context, config)
@@ -61,7 +60,6 @@ class MatrixStickerPlugin(
         warmup_emoji_shortcodes(fetch_remote=False)
 
         self._init_sticker_module()
-        self._sync_fc_tools_activation()
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
         if "emoji_shortcodes" in self.config:
@@ -213,28 +211,14 @@ class MatrixStickerPlugin(
             except Exception as e:
                 logger.debug(f"Save sticker config failed: {e}")
 
-    def _set_fc_tools_activation(self, enabled: bool) -> None:
-        for tool_name in self._FC_TOOL_NAMES:
-            try:
-                if enabled:
-                    StarTools.activate_llm_tool(tool_name)
-                else:
-                    StarTools.deactivate_llm_tool(tool_name)
-            except Exception as e:
-                logger.debug(f"Sync sticker FC tool state failed for {tool_name}: {e}")
-
-    def _sync_fc_tools_activation(self) -> None:
-        self._set_fc_tools_activation(self._is_fc_mode_enabled())
-
-    def _cleanup_fc_tools_activation(self) -> None:
-        self._set_fc_tools_activation(False)
-
-    def _set_llm_mode_runtime(self, mode: str, persist: bool = True) -> str:
-        normalized = self._normalize_llm_mode(mode)
-        self.config["matrix_sticker_llm_mode"] = normalized
+    def _set_prompt_injection_runtime(self, mode: str, persist: bool = True) -> str:
+        normalized = self._normalize_prompt_injection_mode(mode)
+        enabled = normalized == "on"
+        self.config["matrix_sticker_prompt_injection"] = enabled
+        self.config.pop("matrix_sticker_llm_mode", None)
+        self.config.pop("matrix_sticker_fc_mode", None)
         if persist:
             self._save_runtime_config()
-        self._sync_fc_tools_activation()
         return normalized
 
     @staticmethod
@@ -359,17 +343,31 @@ class MatrixStickerPlugin(
 
         elif subcommand == "mode":
             if len(args) < 3:
-                current = self._get_llm_mode()
+                current = self._get_prompt_injection_mode()
                 yield event.plain_result(
-                    "当前 Sticker LLM 模式："
+                    "当前 Sticker 提示词注入："
                     f"{current}\n"
-                    "可选值：inject | fc | hybrid\n"
-                    "用法：/sticker mode <inject|fc|hybrid>"
+                    "可选值：on | off\n"
+                    "用法：/sticker mode <on|off>\n"
+                    "说明：兼容旧参数 inject/fc/hybrid；"
+                    "sticker_search/sticker_send 工具默认启用，停用请在 WebUI 手动操作。"
                 )
                 return
 
             raw_mode = args[2].strip().lower()
             valid_inputs = {
+                "on",
+                "off",
+                "enable",
+                "enabled",
+                "disable",
+                "disabled",
+                "true",
+                "false",
+                "1",
+                "0",
+                "yes",
+                "no",
                 "inject",
                 "injection",
                 "runtime",
@@ -382,13 +380,17 @@ class MatrixStickerPlugin(
             }
             if raw_mode not in valid_inputs:
                 yield event.plain_result(
-                    "无效模式。可选值：inject | fc | hybrid\n"
-                    "用法：/sticker mode <inject|fc|hybrid>"
+                    "无效参数。可选值：on | off\n"
+                    "用法：/sticker mode <on|off>"
                 )
                 return
 
-            new_mode = self._set_llm_mode_runtime(raw_mode, persist=True)
-            yield event.plain_result(f"已切换 Sticker LLM 模式：{new_mode}")
+            new_mode = self._set_prompt_injection_runtime(raw_mode, persist=True)
+            yield event.plain_result(
+                "已更新 Sticker 提示词注入："
+                f"{new_mode}\n"
+                "sticker_search/sticker_send 工具启停请在 WebUI 手动管理。"
+            )
 
         else:
             yield event.plain_result(
@@ -469,9 +471,6 @@ class MatrixStickerPlugin(
             include_alias(boolean): Whether aliases/tags are used for keyword matching.
             room_scope(string): Scope filter: all, room, user.
         """
-        if not self._is_fc_mode_enabled():
-            return "Sticker FC mode is disabled. Switch mode via /sticker mode fc."
-
         if not self._ensure_storage():
             return "Sticker storage is not ready."
 
@@ -655,9 +654,6 @@ class MatrixStickerPlugin(
             shortcode(string): Sticker shortcode/body or alias. Used when sticker_id is empty.
             reply(boolean): Whether to keep reply context to the current message when possible.
         """
-        if not self._is_fc_mode_enabled():
-            return "Sticker FC mode is disabled. Switch mode via /sticker mode fc."
-
         if not self._ensure_storage():
             return "Sticker storage is not ready."
 
@@ -723,7 +719,6 @@ class MatrixStickerPlugin(
     async def on_astrbot_loaded(self):
         """Start auto-sync task when enabled."""
         self._ensure_auto_sync_task()
-        self._sync_fc_tools_activation()
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
@@ -731,8 +726,6 @@ class MatrixStickerPlugin(
         self._ensure_startup_sync_task()
 
     async def terminate(self):
-        self._cleanup_fc_tools_activation()
-
         if self._startup_sync_task and not self._startup_sync_task.done():
             self._startup_sync_task.cancel()
             try:
