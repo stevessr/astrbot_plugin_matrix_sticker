@@ -23,6 +23,13 @@
     "hint": "开启后会在非 Matrix 平台注入 Sticker 短码提示，并将 :shortcode: 转为图片组件发送",
     "default": false
   },
+  "matrix_sticker_llm_mode": {
+    "description": "Sticker LLM 模式",
+    "type": "string",
+    "options": ["inject", "fc", "hybrid"],
+    "hint": "inject=运行时注入短码并替换；fc=仅函数工具（sticker_search/sticker_send）；hybrid=两者同时启用",
+    "default": "inject"
+  },
   "matrix_sticker_auto_sync": {
     "description": "自动同步 Sticker 包",
     "type": "bool",

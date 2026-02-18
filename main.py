@@ -6,10 +6,14 @@ Matrix Sticker 管理插件
 """
 
 import asyncio
+import re
+from datetime import datetime
+from typing import Any
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Reply
+from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
 from .commands import (
@@ -35,6 +39,7 @@ class MatrixStickerPlugin(
     """Matrix Sticker 管理插件"""
 
     _AUTO_SYNC_INTERVAL_SECONDS = 180
+    _FC_TOOL_NAMES = ("sticker_search", "sticker_send")
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context, config)
@@ -55,6 +60,7 @@ class MatrixStickerPlugin(
         warmup_emoji_shortcodes(fetch_remote=False)
 
         self._init_sticker_module()
+        self._sync_fc_tools_activation()
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
         if "emoji_shortcodes" in self.config:
@@ -198,6 +204,48 @@ class MatrixStickerPlugin(
             name="matrix-sticker-auto-sync",
         )
 
+    def _save_runtime_config(self) -> None:
+        save_config = getattr(self.config, "save_config", None)
+        if callable(save_config):
+            try:
+                save_config()
+            except Exception as e:
+                logger.debug(f"Save sticker config failed: {e}")
+
+    def _sync_fc_tools_activation(self) -> None:
+        enable_fc = self._is_fc_mode_enabled()
+        for tool_name in self._FC_TOOL_NAMES:
+            try:
+                if enable_fc:
+                    StarTools.activate_llm_tool(tool_name)
+                else:
+                    StarTools.deactivate_llm_tool(tool_name)
+            except Exception as e:
+                logger.debug(f"Sync sticker FC tool state failed for {tool_name}: {e}")
+
+    def _set_llm_mode_runtime(self, mode: str, persist: bool = True) -> str:
+        normalized = self._normalize_llm_mode(mode)
+        self.config["matrix_sticker_llm_mode"] = normalized
+        if persist:
+            self._save_runtime_config()
+        self._sync_fc_tools_activation()
+        return normalized
+
+    @staticmethod
+    def _split_csv_items(value: str) -> list[str]:
+        if not value:
+            return []
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    @staticmethod
+    def _format_timestamp(ts: float | None) -> str:
+        if not ts:
+            return "-"
+        try:
+            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return "-"
+
     # ========== Command Bindings ==========
     # 装饰器必须定义在 main.py 中，逻辑委托给 mixin
 
@@ -289,6 +337,39 @@ class MatrixStickerPlugin(
             result = await self.cmd_list_room_emotes(event, state_key)
             yield event.plain_result(result)
 
+        elif subcommand == "mode":
+            if len(args) < 3:
+                current = self._get_llm_mode()
+                yield event.plain_result(
+                    "当前 Sticker LLM 模式："
+                    f"{current}\n"
+                    "可选值：inject | fc | hybrid\n"
+                    "用法：/sticker mode <inject|fc|hybrid>"
+                )
+                return
+
+            raw_mode = args[2].strip().lower()
+            valid_inputs = {
+                "inject",
+                "injection",
+                "runtime",
+                "prompt",
+                "fc",
+                "tool",
+                "tools",
+                "hybrid",
+                "both",
+            }
+            if raw_mode not in valid_inputs:
+                yield event.plain_result(
+                    "无效模式。可选值：inject | fc | hybrid\n"
+                    "用法：/sticker mode <inject|fc|hybrid>"
+                )
+                return
+
+            new_mode = self._set_llm_mode_runtime(raw_mode, persist=True)
+            yield event.plain_result(f"已切换 Sticker LLM 模式：{new_mode}")
+
         else:
             yield event.plain_result(
                 f"未知子命令：{subcommand}\n" + self._get_help_text()
@@ -341,6 +422,259 @@ class MatrixStickerPlugin(
         else:
             yield event.plain_result(self._get_alias_help_text())
 
+    @filter.llm_tool(name="sticker_search")
+    async def tool_sticker_search(
+        self,
+        event: AstrMessageEvent,
+        keyword: str = "",
+        pack_name: str = "",
+        tags: str = "",
+        limit: int = 10,
+        offset: int = 0,
+        sort_by: str = "relevance",
+        match_mode: str = "fuzzy",
+        include_alias: bool = True,
+        room_scope: str = "all",
+    ) -> str:
+        """Search stickers with advanced filters.
+
+        Args:
+            keyword(string): Search keyword for shortcode/body, pack, or aliases.
+            pack_name(string): Optional pack filter. Supports fuzzy matching.
+            tags(string): Optional comma-separated tag filters. All tags must match.
+            limit(number): Maximum number of results to return. Range: 1-50.
+            offset(number): Result offset for pagination. Must be >= 0.
+            sort_by(string): Sort mode: relevance, recent, popular, created, name.
+            match_mode(string): Match mode for keyword: fuzzy, exact, regex.
+            include_alias(boolean): Whether aliases/tags are used for keyword matching.
+            room_scope(string): Scope filter: all, room, user.
+        """
+        if not self._is_fc_mode_enabled():
+            return "Sticker FC mode is disabled. Switch mode via /sticker mode fc."
+
+        if not self._ensure_storage():
+            return "Sticker storage is not ready."
+
+        try:
+            limit = max(1, min(int(limit or 10), 50))
+        except (TypeError, ValueError):
+            limit = 10
+        try:
+            offset = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        sort_by_norm = str(sort_by or "relevance").strip().lower()
+        match_mode_norm = str(match_mode or "fuzzy").strip().lower()
+        room_scope_norm = str(room_scope or "all").strip().lower()
+        keyword_norm = str(keyword or "").strip()
+        pack_name_norm = str(pack_name or "").strip().lower()
+        tag_filters = [tag.lower() for tag in self._split_csv_items(tags)]
+
+        valid_sort = {"relevance", "recent", "popular", "created", "name"}
+        valid_match = {"fuzzy", "exact", "regex"}
+        valid_scope = {"all", "room", "user"}
+        if sort_by_norm not in valid_sort:
+            return f"Invalid sort_by: {sort_by_norm}. Use one of: {', '.join(sorted(valid_sort))}."
+        if match_mode_norm not in valid_match:
+            return f"Invalid match_mode: {match_mode_norm}. Use one of: {', '.join(sorted(valid_match))}."
+        if room_scope_norm not in valid_scope:
+            return f"Invalid room_scope: {room_scope_norm}. Use one of: {', '.join(sorted(valid_scope))}."
+
+        regex = None
+        if keyword_norm and match_mode_norm == "regex":
+            try:
+                regex = re.compile(keyword_norm, re.IGNORECASE)
+            except re.error as e:
+                return f"Invalid regex pattern: {e}"
+
+        metas = self._storage.list_stickers(limit=5000)
+        if not metas:
+            return "No stickers found in storage."
+
+        scored: list[tuple[Any, float, list[str]]] = []
+        keyword_lower = keyword_norm.lower()
+
+        for meta in metas:
+            body = str(getattr(meta, "body", "") or "")
+            pack = str(getattr(meta, "pack_name", "") or "")
+            room_id = getattr(meta, "room_id", None)
+            raw_tags = getattr(meta, "tags", None) or []
+            meta_tags = [str(tag) for tag in raw_tags if isinstance(tag, str) and tag]
+            meta_tags_lower = [tag.lower() for tag in meta_tags]
+
+            if pack_name_norm and pack_name_norm not in pack.lower():
+                continue
+
+            if room_scope_norm == "room" and not room_id:
+                continue
+            if room_scope_norm == "user" and room_id:
+                continue
+
+            if tag_filters and any(tag not in meta_tags_lower for tag in tag_filters):
+                continue
+
+            score = 0.0
+            if keyword_norm:
+                matched = False
+
+                if match_mode_norm == "exact":
+                    if body.lower() == keyword_lower:
+                        score += 8.0
+                        matched = True
+                    if pack.lower() == keyword_lower:
+                        score += 4.0
+                        matched = True
+                    if include_alias and keyword_lower in meta_tags_lower:
+                        score += 6.0
+                        matched = True
+
+                elif match_mode_norm == "regex":
+                    fields = [body, pack]
+                    if include_alias:
+                        fields.extend(meta_tags)
+                    hits = sum(1 for field in fields if regex and regex.search(field))
+                    if hits > 0:
+                        score += float(hits * 2)
+                        matched = True
+
+                else:
+                    if keyword_lower in body.lower():
+                        score += 4.0
+                        matched = True
+                    if keyword_lower in pack.lower():
+                        score += 2.0
+                        matched = True
+                    if include_alias and any(
+                        keyword_lower in tag for tag in meta_tags_lower
+                    ):
+                        score += 1.5
+                        matched = True
+
+                if not matched:
+                    continue
+
+            scored.append((meta, score, meta_tags))
+
+        total = len(scored)
+        if total == 0:
+            return "No stickers matched the filters."
+
+        if sort_by_norm == "recent":
+            scored.sort(
+                key=lambda item: (
+                    getattr(item[0], "last_used", 0.0),
+                    getattr(item[0], "created_at", 0.0),
+                ),
+                reverse=True,
+            )
+        elif sort_by_norm == "popular":
+            scored.sort(
+                key=lambda item: (
+                    getattr(item[0], "use_count", 0),
+                    getattr(item[0], "last_used", 0.0),
+                ),
+                reverse=True,
+            )
+        elif sort_by_norm == "created":
+            scored.sort(
+                key=lambda item: getattr(item[0], "created_at", 0.0), reverse=True
+            )
+        elif sort_by_norm == "name":
+            scored.sort(
+                key=lambda item: str(getattr(item[0], "body", "") or "").lower()
+            )
+        else:
+            scored.sort(
+                key=lambda item: (
+                    item[1],
+                    getattr(item[0], "use_count", 0),
+                    getattr(item[0], "last_used", 0.0),
+                ),
+                reverse=True,
+            )
+
+        page = scored[offset : offset + limit]
+        if not page:
+            return f"No results at offset {offset}. Total matched: {total}."
+
+        lines = [
+            (
+                f"Sticker search matched {total} item(s), "
+                f"returning {len(page)} from offset {offset}."
+            ),
+            "Use tool sticker_send with sticker_id to send one.",
+        ]
+        for idx, (meta, score, meta_tags) in enumerate(page, start=offset + 1):
+            tags_text = ", ".join(meta_tags[:8]) if meta_tags else "-"
+            lines.append(
+                f"{idx}. id={meta.sticker_id} shortcode=:{meta.body}: "
+                f"pack={meta.pack_name or '-'} tags={tags_text} "
+                f"used={meta.use_count} "
+                f"last={self._format_timestamp(getattr(meta, 'last_used', None))} "
+                f"score={score:.2f}"
+            )
+        return "\n".join(lines)
+
+    @filter.llm_tool(name="sticker_send")
+    async def tool_sticker_send(
+        self,
+        event: AstrMessageEvent,
+        sticker_id: str = "",
+        shortcode: str = "",
+        reply: bool = True,
+    ) -> str:
+        """Send a sticker by id or shortcode.
+
+        Args:
+            sticker_id(string): Exact sticker ID to send. Preferred when available.
+            shortcode(string): Sticker shortcode/body or alias. Used when sticker_id is empty.
+            reply(boolean): Whether to keep reply context to the current message when possible.
+        """
+        if not self._is_fc_mode_enabled():
+            return "Sticker FC mode is disabled. Switch mode via /sticker mode fc."
+
+        if not self._ensure_storage():
+            return "Sticker storage is not ready."
+
+        identifier = str(sticker_id or "").strip() or str(shortcode or "").strip()
+        if not identifier:
+            return "Please provide sticker_id or shortcode."
+
+        sticker = None
+        if sticker_id:
+            sticker = self._storage.get_sticker(identifier)
+        if sticker is None:
+            sticker = self._find_sticker_by_shortcode(identifier)
+        if sticker is None:
+            results = self._storage.find_stickers(query=identifier, limit=1)
+            if results:
+                sticker = results[0]
+        if sticker is None:
+            return f"Sticker not found: {identifier}"
+
+        chain_items = []
+        if bool(reply):
+            reply_id = self._get_reply_event_id(event)
+            if reply_id:
+                chain_items.append(Reply(id=reply_id))
+
+        platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
+        if platform_name == "matrix":
+            chain_items.append(sticker)
+        else:
+            image = self._build_image_component_from_sticker(sticker)
+            if image is None:
+                return (
+                    "Failed to convert sticker to image component for this platform. "
+                    "Try another sticker."
+                )
+            chain_items.append(image)
+
+        await event.send(MessageChain(chain_items))
+        sticker_id_out = getattr(sticker, "sticker_id", None) or "-"
+        sticker_body_out = getattr(sticker, "body", None) or identifier
+        return f"Sent sticker: :{sticker_body_out}: (id={sticker_id_out})"
+
     # ========== LLM Hooks ==========
 
     @filter.on_llm_response()
@@ -364,6 +698,7 @@ class MatrixStickerPlugin(
     async def on_astrbot_loaded(self):
         """Start auto-sync task when enabled."""
         self._ensure_auto_sync_task()
+        self._sync_fc_tools_activation()
 
     @filter.on_platform_loaded()
     async def on_platform_loaded(self):
