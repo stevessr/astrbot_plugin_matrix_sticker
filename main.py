@@ -8,6 +8,7 @@ Matrix Sticker 管理插件
 import asyncio
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
@@ -250,6 +251,20 @@ class MatrixStickerPlugin(
             return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
         except Exception:
             return "-"
+
+    @staticmethod
+    def _format_local_file_path(path_value: str | None) -> tuple[str, bool]:
+        raw_path = str(path_value or "").strip()
+        if not raw_path:
+            return "-", False
+        try:
+            path_obj = Path(raw_path).expanduser()
+            exists = path_obj.exists()
+            if exists:
+                return str(path_obj.resolve()), True
+            return str(path_obj), False
+        except Exception:
+            return raw_path, False
 
     # ========== Command Bindings ==========
     # 装饰器必须定义在 main.py 中，逻辑委托给 mixin
@@ -611,12 +626,17 @@ class MatrixStickerPlugin(
         ]
         for idx, (meta, score, meta_tags) in enumerate(page, start=offset + 1):
             tags_text = ", ".join(meta_tags[:8]) if meta_tags else "-"
+            file_path_text, file_exists = self._format_local_file_path(
+                getattr(meta, "local_path", None)
+            )
             lines.append(
                 f"{idx}. id={meta.sticker_id} shortcode=:{meta.body}: "
                 f"pack={meta.pack_name or '-'} tags={tags_text} "
                 f"used={meta.use_count} "
                 f"last={self._format_timestamp(getattr(meta, 'last_used', None))} "
-                f"score={score:.2f}"
+                f"score={score:.2f} "
+                f"file_path={file_path_text} "
+                f"file_exists={'yes' if file_exists else 'no'}"
             )
         return "\n".join(lines)
 
