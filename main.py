@@ -6,6 +6,7 @@ Matrix Sticker 管理插件
 """
 
 import asyncio
+import math
 import re
 import shlex
 from datetime import datetime
@@ -344,12 +345,28 @@ class MatrixStickerPlugin(
 
     @staticmethod
     def _format_timestamp(ts: float | None) -> str:
-        if not ts:
+        timestamp = MatrixStickerPlugin._to_float(ts, default=0.0)
+        if timestamp <= 0:
             return "-"
         try:
-            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+            return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
         except Exception:
             return "-"
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(parsed):
+            return default
+        return parsed
+
+    @classmethod
+    def _to_int(cls, value: Any, default: int = 0) -> int:
+        parsed = cls._to_float(value, default=float(default))
+        return int(parsed)
 
     @staticmethod
     def _format_local_file_path(path_value: str | None) -> tuple[str, bool]:
@@ -715,22 +732,23 @@ class MatrixStickerPlugin(
         if sort_by_norm == "recent":
             scored.sort(
                 key=lambda item: (
-                    getattr(item[0], "last_used", 0.0),
-                    getattr(item[0], "created_at", 0.0),
+                    self._to_float(getattr(item[0], "last_used", 0.0)),
+                    self._to_float(getattr(item[0], "created_at", 0.0)),
                 ),
                 reverse=True,
             )
         elif sort_by_norm == "popular":
             scored.sort(
                 key=lambda item: (
-                    getattr(item[0], "use_count", 0),
-                    getattr(item[0], "last_used", 0.0),
+                    self._to_int(getattr(item[0], "use_count", 0)),
+                    self._to_float(getattr(item[0], "last_used", 0.0)),
                 ),
                 reverse=True,
             )
         elif sort_by_norm == "created":
             scored.sort(
-                key=lambda item: getattr(item[0], "created_at", 0.0), reverse=True
+                key=lambda item: self._to_float(getattr(item[0], "created_at", 0.0)),
+                reverse=True,
             )
         elif sort_by_norm == "name":
             scored.sort(
@@ -740,8 +758,8 @@ class MatrixStickerPlugin(
             scored.sort(
                 key=lambda item: (
                     item[1],
-                    getattr(item[0], "use_count", 0),
-                    getattr(item[0], "last_used", 0.0),
+                    self._to_int(getattr(item[0], "use_count", 0)),
+                    self._to_float(getattr(item[0], "last_used", 0.0)),
                 ),
                 reverse=True,
             )
