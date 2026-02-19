@@ -207,7 +207,10 @@ class MatrixStickerPlugin(
         total_synced = 0
         for room_id in joined_rooms:
             try:
-                total_synced += await syncer.sync_room_stickers(room_id)
+                normalized_room_id = str(room_id or "").strip()
+                if not normalized_room_id:
+                    continue
+                total_synced += await syncer.sync_room_stickers(normalized_room_id)
             except Exception as room_e:
                 logger.debug(f"Sync room stickers failed for {room_id}: {room_e}")
 
@@ -600,7 +603,7 @@ class MatrixStickerPlugin(
         keyword_norm = str(keyword or "").strip()
         pack_name_norm = str(pack_name or "").strip().lower()
         include_alias_flag = self._parse_bool_like(include_alias, True)
-        current_room_id = str(event.get_session_id() or "")
+        current_room_id = str(event.get_session_id() or "").strip()
         tag_filters = [tag.lower() for tag in self._split_csv_items(tags)]
 
         valid_sort = {"relevance", "recent", "popular", "created", "name"}
@@ -813,7 +816,11 @@ class MatrixStickerPlugin(
                 seen_queries.add(candidate_norm)
                 dedup_query_candidates.append(candidate)
             for candidate in dedup_query_candidates:
-                results = self._storage.find_stickers(query=candidate, limit=1)
+                try:
+                    results = self._storage.find_stickers(query=candidate, limit=1)
+                except Exception as e:
+                    logger.debug(f"Find sticker by query failed ({candidate}): {e}")
+                    continue
                 if results:
                     sticker = results[0]
                     identifier = candidate
