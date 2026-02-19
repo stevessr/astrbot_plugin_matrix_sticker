@@ -350,7 +350,7 @@ class MatrixStickerPlugin(
             return "-"
         try:
             return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
-        except Exception:
+        except (OSError, OverflowError, ValueError):
             return "-"
 
     @staticmethod
@@ -379,7 +379,7 @@ class MatrixStickerPlugin(
             if exists:
                 return str(path_obj.resolve()), True
             return str(path_obj), False
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             return raw_path, False
 
     # ========== Command Bindings ==========
