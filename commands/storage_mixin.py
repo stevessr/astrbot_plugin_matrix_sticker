@@ -11,6 +11,8 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image, Reply
 
+from astrbot_plugin_matrix_adapter.utils import MatrixUtils
+
 
 class StickerStorageMixin:
     """Sticker 基础功能：初始化、存储、查找等"""
@@ -45,19 +47,7 @@ class StickerStorageMixin:
         return self._storage is not None
 
     def _iter_platform_instances(self):
-        platform_manager = getattr(self.context, "platform_manager", None)
-        if platform_manager is None:
-            return []
-        get_insts = getattr(platform_manager, "get_insts", None)
-        if callable(get_insts):
-            try:
-                return list(get_insts())
-            except Exception:
-                pass
-        platforms = getattr(platform_manager, "platform_insts", None)
-        if isinstance(platforms, list):
-            return platforms
-        return []
+        return MatrixUtils.iter_platform_instances(self.context)
 
     def _get_storage_reload_interval_seconds(self) -> float:
         interval = getattr(self, "_storage_reload_interval_seconds", 3.0)
@@ -365,23 +355,10 @@ class StickerStorageMixin:
     def _get_matrix_syncer(self, event: AstrMessageEvent):
         try:
             platform_id = str(event.get_platform_id() or "")
-            fallback_syncer = None
-            for platform in self._iter_platform_instances():
-                syncer = getattr(platform, "sticker_syncer", None)
-                if syncer is None:
-                    continue
-                try:
-                    meta = platform.meta()
-                except Exception:
-                    meta = None
-                meta_name = str(getattr(meta, "name", "") or "").strip().lower()
-                if meta_name != "matrix":
-                    continue
-                if platform_id and str(getattr(meta, "id", "") or "") == platform_id:
-                    return syncer
-                if fallback_syncer is None:
-                    fallback_syncer = syncer
-            return fallback_syncer
+            platform = MatrixUtils.get_matrix_platform(self.context, platform_id)
+            if platform is None:
+                return None
+            return getattr(platform, "sticker_syncer", None)
         except Exception as e:
             logger.debug(f"获取 Matrix sticker 同步器失败：{e}")
         return None
@@ -390,22 +367,7 @@ class StickerStorageMixin:
         """获取 Matrix 客户端"""
         try:
             platform_id = str(event.get_platform_id() or "")
-            fallback_client = None
-            for platform in self._iter_platform_instances():
-                if not hasattr(platform, "client"):
-                    continue
-                try:
-                    meta = platform.meta()
-                except Exception:
-                    meta = None
-                meta_name = str(getattr(meta, "name", "") or "").strip().lower()
-                if meta_name != "matrix":
-                    continue
-                if platform_id and str(getattr(meta, "id", "") or "") == platform_id:
-                    return platform.client
-                if fallback_client is None:
-                    fallback_client = platform.client
-            return fallback_client
+            return MatrixUtils.get_matrix_client(self.context, platform_id)
         except Exception as e:
             logger.debug(f"获取 Matrix 客户端失败：{e}")
         return None
