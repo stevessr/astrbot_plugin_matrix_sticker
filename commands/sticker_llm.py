@@ -91,7 +91,7 @@ class StickerLLMMixin(StickerBaseMixin):
     @staticmethod
     def _get_event_platform_name(event: AstrMessageEvent) -> str:
         if hasattr(event, "get_platform_name"):
-            return str(event.get_platform_name() or "")
+            return str(event.get_platform_name() or "").strip().lower()
         return ""
 
     def _is_full_intercept_enabled(self) -> bool:
@@ -249,7 +249,8 @@ class StickerLLMMixin(StickerBaseMixin):
                     continue
                 try:
                     meta = platform.meta()
-                    if getattr(meta, "name", "") != "matrix":
+                    meta_name = str(getattr(meta, "name", "") or "").strip().lower()
+                    if meta_name != "matrix":
                         continue
                 except Exception:
                     continue

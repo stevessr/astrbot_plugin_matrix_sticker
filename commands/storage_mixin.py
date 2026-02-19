@@ -370,7 +370,8 @@ class StickerStorageMixin:
                     meta = platform.meta()
                 except Exception:
                     meta = None
-                if getattr(meta, "name", "") != "matrix":
+                meta_name = str(getattr(meta, "name", "") or "").strip().lower()
+                if meta_name != "matrix":
                     continue
                 if platform_id and str(getattr(meta, "id", "") or "") == platform_id:
                     return syncer
@@ -393,7 +394,8 @@ class StickerStorageMixin:
                     meta = platform.meta()
                 except Exception:
                     meta = None
-                if getattr(meta, "name", "") != "matrix":
+                meta_name = str(getattr(meta, "name", "") or "").strip().lower()
+                if meta_name != "matrix":
                     continue
                 if platform_id and str(getattr(meta, "id", "") or "") == platform_id:
                     return platform.client

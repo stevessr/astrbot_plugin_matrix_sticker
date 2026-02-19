@@ -75,7 +75,8 @@ class StickerRoomEmoteMixin:
         self, event: AstrMessageEvent, shortcode: str, state_key: str = ""
     ) -> str:
         """添加表情到当前房间"""
-        if event.get_platform_name() != "matrix":
+        platform_name = str(event.get_platform_name() or "").strip().lower()
+        if platform_name != "matrix":
             return "此命令仅在 Matrix 平台可用"
 
         client = self._get_matrix_client(event)
@@ -156,7 +157,8 @@ class StickerRoomEmoteMixin:
         self, event: AstrMessageEvent, shortcode: str, state_key: str = ""
     ) -> str:
         """从当前房间移除表情"""
-        if event.get_platform_name() != "matrix":
+        platform_name = str(event.get_platform_name() or "").strip().lower()
+        if platform_name != "matrix":
             return "此命令仅在 Matrix 平台可用"
 
         client = self._get_matrix_client(event)
@@ -209,7 +211,8 @@ class StickerRoomEmoteMixin:
         self, event: AstrMessageEvent, state_key: str = ""
     ) -> str:
         """列出当前房间的表情"""
-        if event.get_platform_name() != "matrix":
+        platform_name = str(event.get_platform_name() or "").strip().lower()
+        if platform_name != "matrix":
             return "此命令仅在 Matrix 平台可用"
 
         client = self._get_matrix_client(event)

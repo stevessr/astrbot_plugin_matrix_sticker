@@ -7,6 +7,7 @@ Matrix Sticker 管理插件
 
 import asyncio
 import re
+import shlex
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -141,7 +142,8 @@ class MatrixStickerPlugin(
                 continue
             try:
                 meta = platform.meta()
-                if getattr(meta, "name", "") != "matrix":
+                meta_name = str(getattr(meta, "name", "") or "").strip().lower()
+                if meta_name != "matrix":
                     continue
             except Exception:
                 if not hasattr(platform, "_matrix_config"):
@@ -318,6 +320,16 @@ class MatrixStickerPlugin(
         return [item.strip() for item in value.split(",") if item.strip()]
 
     @staticmethod
+    def _split_command_args(message_text: str) -> list[str]:
+        text = str(message_text or "").strip()
+        if not text:
+            return []
+        try:
+            return shlex.split(text)
+        except ValueError:
+            return text.split()
+
+    @staticmethod
     def _parse_bool_like(value: Any, default: bool) -> bool:
         if isinstance(value, bool):
             return value
@@ -365,7 +377,7 @@ class MatrixStickerPlugin(
             )
             return
 
-        args = event.message_str.strip().split()
+        args = self._split_command_args(event.message_str)
         if len(args) < 2:
             args.append("help")
 
@@ -513,7 +525,7 @@ class MatrixStickerPlugin(
             yield event.plain_result("Sticker 模块未初始化")
             return
 
-        args = event.message_str.strip().split()
+        args = self._split_command_args(event.message_str)
         if len(args) < 2:
             yield event.plain_result(self._get_alias_help_text())
             return
@@ -837,7 +849,7 @@ class MatrixStickerPlugin(
 
         platform_name = ""
         if hasattr(event, "get_platform_name"):
-            platform_name = str(event.get_platform_name() or "")
+            platform_name = str(event.get_platform_name() or "").strip().lower()
         if platform_name == "matrix":
             chain_items.append(sticker)
         else:
