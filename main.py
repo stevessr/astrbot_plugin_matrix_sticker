@@ -101,7 +101,9 @@ class MatrixStickerPlugin(
                 self.config.get("matrix_sticker_emoji_shortcodes"),
                 False,
             )
-        return self._parse_bool_like(self.config.get("matrix_emoji_shortcodes", False), False)
+        return self._parse_bool_like(
+            self.config.get("matrix_emoji_shortcodes", False), False
+        )
 
     def _is_shortcode_strict_mode(self) -> bool:
         if "emoji_shortcodes_strict_mode" in self.config:
@@ -194,6 +196,13 @@ class MatrixStickerPlugin(
         except Exception as e:
             logger.debug(f"Load joined rooms failed for {platform_key}: {e}")
             return
+        if isinstance(joined_rooms, dict):
+            joined_rooms = joined_rooms.get("joined_rooms", [])
+        if not isinstance(joined_rooms, (list, tuple, set)):
+            logger.debug(
+                f"Invalid joined rooms response for {platform_key}: {joined_rooms}"
+            )
+            return
 
         total_synced = 0
         for room_id in joined_rooms:
@@ -225,8 +234,21 @@ class MatrixStickerPlugin(
 
         await self._sync_all_platform_stickers_once()
 
+    def _handle_startup_sync_task_done(self, task: asyncio.Task) -> None:
+        if self._startup_sync_task is task:
+            self._startup_sync_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Sticker startup sync task failed: {e}")
+
     def _ensure_startup_sync_task(self) -> None:
         if not self._is_sticker_auto_sync_enabled():
+            if self._startup_sync_task and not self._startup_sync_task.done():
+                self._startup_sync_task.cancel()
+            self._startup_sync_task = None
             return
         if self._startup_sync_task and not self._startup_sync_task.done():
             return
@@ -234,6 +256,7 @@ class MatrixStickerPlugin(
             self._startup_sync_when_ready(),
             name="matrix-sticker-startup-sync",
         )
+        self._startup_sync_task.add_done_callback(self._handle_startup_sync_task_done)
 
     async def _auto_sync_loop(self) -> None:
         while True:
@@ -243,8 +266,21 @@ class MatrixStickerPlugin(
                 logger.debug(f"Auto sync loop failed: {e}")
             await asyncio.sleep(self._AUTO_SYNC_INTERVAL_SECONDS)
 
+    def _handle_auto_sync_task_done(self, task: asyncio.Task) -> None:
+        if self._auto_sync_task is task:
+            self._auto_sync_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Sticker auto-sync task failed: {e}")
+
     def _ensure_auto_sync_task(self) -> None:
         if not self._is_sticker_auto_sync_enabled():
+            if self._auto_sync_task and not self._auto_sync_task.done():
+                self._auto_sync_task.cancel()
+            self._auto_sync_task = None
             return
         if self._auto_sync_task and not self._auto_sync_task.done():
             return
@@ -252,6 +288,7 @@ class MatrixStickerPlugin(
             self._auto_sync_loop(),
             name="matrix-sticker-auto-sync",
         )
+        self._auto_sync_task.add_done_callback(self._handle_auto_sync_task_done)
 
     def _save_runtime_config(self) -> None:
         save_config = getattr(self.config, "save_config", None)
@@ -450,8 +487,7 @@ class MatrixStickerPlugin(
             }
             if raw_mode not in valid_inputs:
                 yield event.plain_result(
-                    "无效参数。可选值：on | off\n"
-                    "用法：/sticker mode <on|off>"
+                    "无效参数。可选值：on | off\n用法：/sticker mode <on|off>"
                 )
                 return
 
@@ -481,9 +517,8 @@ class MatrixStickerPlugin(
 
         subcommand = args[1].lower()
 
-        if (
-            subcommand in self._MUTATING_ALIAS_SUBCOMMANDS
-            and not self._is_admin_event(event)
+        if subcommand in self._MUTATING_ALIAS_SUBCOMMANDS and not self._is_admin_event(
+            event
         ):
             yield event.plain_result("权限不足：该子命令仅管理员可用。")
             return
@@ -799,7 +834,7 @@ class MatrixStickerPlugin(
         if platform_name == "matrix":
             chain_items.append(sticker)
         else:
-            image = self._build_image_component_from_sticker(sticker)
+            image = await self._build_image_component_from_sticker(sticker, event)
             if image is None:
                 return (
                     "Failed to convert sticker to image component for this platform. "

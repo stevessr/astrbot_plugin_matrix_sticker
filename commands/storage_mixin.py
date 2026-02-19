@@ -331,7 +331,7 @@ class StickerStorageMixin:
     async def cmd_sync_room_stickers(self, event: AstrMessageEvent) -> str:
         """同步当前房间的 sticker 包"""
         try:
-            room_id = event.get_session_id()
+            room_id = str(event.get_session_id() or "").strip()
             if not room_id:
                 return "无法获取当前房间 ID"
 

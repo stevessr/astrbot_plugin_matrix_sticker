@@ -9,6 +9,11 @@ from astrbot.api.event import AstrMessageEvent
 class StickerRoomEmoteMixin:
     """房间自定义表情相关命令"""
 
+    @staticmethod
+    def _resolve_room_id(event: AstrMessageEvent) -> str | None:
+        room_id = str(event.get_session_id() or "").strip()
+        return room_id or None
+
     async def _get_image_mxc_from_reply(
         self, event: AstrMessageEvent
     ) -> tuple[str | None, str | None]:
@@ -18,7 +23,9 @@ class StickerRoomEmoteMixin:
             (mxc_url, mimetype) 或 (None, None)
         """
         try:
-            room_id = event.get_session_id()
+            room_id = self._resolve_room_id(event)
+            if not room_id:
+                return None, None
             reply_event_id = None
 
             raw_message = getattr(event, "message_obj", None)
@@ -75,7 +82,7 @@ class StickerRoomEmoteMixin:
         if not client:
             return "无法获取 Matrix 客户端"
 
-        room_id = event.get_session_id()
+        room_id = self._resolve_room_id(event)
         if not room_id:
             return "无法获取当前房间 ID"
 
@@ -156,7 +163,7 @@ class StickerRoomEmoteMixin:
         if not client:
             return "无法获取 Matrix 客户端"
 
-        room_id = event.get_session_id()
+        room_id = self._resolve_room_id(event)
         if not room_id:
             return "无法获取当前房间 ID"
 
@@ -209,7 +216,7 @@ class StickerRoomEmoteMixin:
         if not client:
             return "无法获取 Matrix 客户端"
 
-        room_id = event.get_session_id()
+        room_id = self._resolve_room_id(event)
         if not room_id:
             return "无法获取当前房间 ID"
 

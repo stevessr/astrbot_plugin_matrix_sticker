@@ -127,7 +127,9 @@ class StickerLLMMixin(StickerBaseMixin):
                 config.get("matrix_sticker_emoji_shortcodes"),
                 False,
             )
-        return self._parse_bool_like_config(config.get("matrix_emoji_shortcodes", False), False)
+        return self._parse_bool_like_config(
+            config.get("matrix_emoji_shortcodes", False), False
+        )
 
     def _normalize_prompt_injection_mode(self, mode: str | None) -> str:
         raw = str(mode or "").strip().lower()
@@ -171,7 +173,11 @@ class StickerLLMMixin(StickerBaseMixin):
             shortcode_norm = str(shortcode or "").strip().lower()
             if not shortcode_norm or shortcode_norm in resolved:
                 continue
-            resolved[shortcode_norm] = self._find_sticker_by_shortcode(shortcode)
+            try:
+                resolved[shortcode_norm] = self._find_sticker_by_shortcode(shortcode)
+            except Exception as e:
+                logger.debug(f"查找短码 '{shortcode_norm}' 失败：{e}")
+                resolved[shortcode_norm] = None
         return resolved
 
     def _convert_emoji_shortcodes_in_chain(self, chain: list) -> tuple[list, bool]:
@@ -222,7 +228,41 @@ class StickerLLMMixin(StickerBaseMixin):
             return str(local_path)
         return None
 
-    def _build_image_component_from_sticker(self, sticker) -> Image | None:
+    def _resolve_matrix_download_client(self, event: AstrMessageEvent | None = None):
+        matrix_client_getter = getattr(self, "_get_matrix_client", None)
+        if event is not None and callable(matrix_client_getter):
+            try:
+                client = matrix_client_getter(event)
+                if client is not None and hasattr(client, "download_file"):
+                    return client
+            except Exception as e:
+                logger.debug(f"Resolve matrix client from event failed: {e}")
+
+        iter_platform_instances = getattr(self, "_iter_platform_instances", None)
+        if not callable(iter_platform_instances):
+            return None
+
+        try:
+            for platform in iter_platform_instances():
+                client = getattr(platform, "client", None)
+                if client is None or not hasattr(client, "download_file"):
+                    continue
+                try:
+                    meta = platform.meta()
+                    if getattr(meta, "name", "") != "matrix":
+                        continue
+                except Exception:
+                    continue
+                return client
+        except Exception as e:
+            logger.debug(f"Resolve fallback matrix client failed: {e}")
+        return None
+
+    async def _build_image_component_from_sticker(
+        self,
+        sticker,
+        event: AstrMessageEvent | None = None,
+    ) -> Image | None:
         try:
             local_path = self._resolve_sticker_local_path(sticker)
             if local_path:
@@ -233,13 +273,31 @@ class StickerLLMMixin(StickerBaseMixin):
                 return None
 
             if sticker_url.startswith("mxc://"):
-                logger.debug(f"Skip mxc sticker without local cache: {sticker_url}")
+                matrix_client = self._resolve_matrix_download_client(event)
+                if matrix_client is None:
+                    logger.debug(
+                        f"Skip mxc sticker without matrix client: {sticker_url}"
+                    )
+                    return None
+                try:
+                    try:
+                        image_bytes = await matrix_client.download_file(
+                            sticker_url, allow_thumbnail_fallback=True
+                        )
+                    except TypeError:
+                        image_bytes = await matrix_client.download_file(sticker_url)
+                    if image_bytes:
+                        return Image.fromBytes(image_bytes)
+                except Exception as e:
+                    logger.debug(f"Download mxc sticker failed: {e}")
                 return None
 
             if sticker_url.startswith("http://") or sticker_url.startswith("https://"):
                 return Image.fromURL(sticker_url)
 
-            if sticker_url.startswith("file:///") or sticker_url.startswith("base64://"):
+            if sticker_url.startswith("file:///") or sticker_url.startswith(
+                "base64://"
+            ):
                 return Image(file=sticker_url)
 
             if Path(sticker_url).exists():
@@ -382,8 +440,11 @@ class StickerLLMMixin(StickerBaseMixin):
                     sticker_id = getattr(sticker, "sticker_id", None) or sticker.body
                     replacement_component = sticker
                     if not is_matrix_platform:
-                        replacement_component = self._build_image_component_from_sticker(
-                            sticker
+                        replacement_component = (
+                            await self._build_image_component_from_sticker(
+                                sticker,
+                                event,
+                            )
                         )
                         if replacement_component is None:
                             logger.debug(
@@ -549,7 +610,13 @@ class StickerLLMMixin(StickerBaseMixin):
         if not self._ensure_storage():
             return
 
-        stickers = self._storage.list_stickers(limit=self._get_prompt_sticker_limit())
+        try:
+            stickers = self._storage.list_stickers(
+                limit=self._get_prompt_sticker_limit()
+            )
+        except Exception as e:
+            logger.debug(f"读取 sticker 列表失败，跳过提示词注入：{e}")
+            return
         if not stickers:
             return
 
