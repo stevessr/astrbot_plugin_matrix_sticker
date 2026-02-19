@@ -288,7 +288,7 @@ class StickerLLMMixin(StickerBaseMixin):
                     except TypeError:
                         image_bytes = await matrix_client.download_file(sticker_url)
                     if image_bytes:
-                        return Image.fromBytes(image_bytes)
+                        return Image.fromBytes(bytes(image_bytes))
                 except Exception as e:
                     logger.debug(f"Download mxc sticker failed: {e}")
                 return None
