@@ -64,6 +64,19 @@ class StickerLLMMixin(StickerBaseMixin):
         "tools": "off",
     }
 
+    @staticmethod
+    def _parse_bool_like_config(value: object, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        raw = str(value).strip().lower()
+        if raw in {"1", "true", "yes", "on", "enable", "enabled"}:
+            return True
+        if raw in {"0", "false", "no", "off", "disable", "disabled"}:
+            return False
+        return default
+
     def _get_reply_event_id(self, event: AstrMessageEvent) -> str | None:
         message_obj = getattr(event, "message_obj", None)
         if not message_obj:
@@ -75,25 +88,46 @@ class StickerLLMMixin(StickerBaseMixin):
             return str(reply_id)
         return None
 
+    @staticmethod
+    def _get_event_platform_name(event: AstrMessageEvent) -> str:
+        if hasattr(event, "get_platform_name"):
+            return str(event.get_platform_name() or "")
+        return ""
+
     def _is_full_intercept_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
-        return bool(config.get("matrix_sticker_full_intercept", False))
+        return self._parse_bool_like_config(
+            config.get("matrix_sticker_full_intercept", False),
+            False,
+        )
 
     def _is_shortcode_strict_mode(self) -> bool:
         config = getattr(self, "config", None) or {}
         if "emoji_shortcodes_strict_mode" in config:
-            return bool(config.get("emoji_shortcodes_strict_mode"))
+            return self._parse_bool_like_config(
+                config.get("emoji_shortcodes_strict_mode"),
+                False,
+            )
         if "matrix_sticker_shortcode_strict_mode" in config:
-            return bool(config.get("matrix_sticker_shortcode_strict_mode"))
-        return bool(config.get("matrix_emoji_shortcodes_strict_mode", False))
+            return self._parse_bool_like_config(
+                config.get("matrix_sticker_shortcode_strict_mode"),
+                False,
+            )
+        return self._parse_bool_like_config(
+            config.get("matrix_emoji_shortcodes_strict_mode", False),
+            False,
+        )
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
         if "emoji_shortcodes" in config:
-            return bool(config.get("emoji_shortcodes"))
+            return self._parse_bool_like_config(config.get("emoji_shortcodes"), False)
         if "matrix_sticker_emoji_shortcodes" in config:
-            return bool(config.get("matrix_sticker_emoji_shortcodes"))
-        return bool(config.get("matrix_emoji_shortcodes", False))
+            return self._parse_bool_like_config(
+                config.get("matrix_sticker_emoji_shortcodes"),
+                False,
+            )
+        return self._parse_bool_like_config(config.get("matrix_emoji_shortcodes", False), False)
 
     def _normalize_prompt_injection_mode(self, mode: str | None) -> str:
         raw = str(mode or "").strip().lower()
@@ -117,8 +151,14 @@ class StickerLLMMixin(StickerBaseMixin):
     def _is_other_platforms_extension_enabled(self) -> bool:
         config = getattr(self, "config", None) or {}
         if "matrix_sticker_cross_platform" in config:
-            return bool(config.get("matrix_sticker_cross_platform"))
-        return bool(config.get("matrix_sticker_enable_other_platforms", False))
+            return self._parse_bool_like_config(
+                config.get("matrix_sticker_cross_platform"),
+                False,
+            )
+        return self._parse_bool_like_config(
+            config.get("matrix_sticker_enable_other_platforms", False),
+            False,
+        )
 
     def _get_shortcode_pattern(self) -> re.Pattern[str]:
         if self._is_shortcode_strict_mode():
@@ -251,7 +291,7 @@ class StickerLLMMixin(StickerBaseMixin):
             self._convert_emoji_shortcodes_in_result(result)
             return
 
-        platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
+        platform_name = self._get_event_platform_name(event)
         is_matrix_platform = platform_name == "matrix"
         extension_enabled = self._is_other_platforms_extension_enabled()
 
@@ -312,6 +352,7 @@ class StickerLLMMixin(StickerBaseMixin):
 
         max_stickers = self._get_max_stickers_per_reply()
         found_stickers: dict[str, Any] = {}
+        marked_usage_ids: set[str] = set()
         new_chain = []
         modified = False
 
@@ -369,6 +410,12 @@ class StickerLLMMixin(StickerBaseMixin):
                             if sticker_id not in found_stickers:
                                 new_chain.append(replacement_component)
                                 found_stickers[sticker_id] = replacement_component
+                                usage_id = str(
+                                    getattr(sticker, "sticker_id", "") or sticker_id
+                                )
+                                if usage_id and usage_id not in marked_usage_ids:
+                                    self._mark_sticker_used(sticker)
+                                    marked_usage_ids.add(usage_id)
                         modified = True
                         component_modified = True
                     else:
@@ -412,6 +459,7 @@ class StickerLLMMixin(StickerBaseMixin):
                         logger.info(f"创建 MessageChain: {chain}")
                         send_result = await event.send(chain)
                         logger.info(f"发送结果：{send_result}")
+                        self._mark_sticker_used(sticker)
                     except Exception as e:
                         logger.error(f"发送 sticker 失败：{e}", exc_info=True)
             else:
@@ -479,6 +527,8 @@ class StickerLLMMixin(StickerBaseMixin):
                 chain_comps.append(segment)
                 chain = MessageChain(chain_comps)
                 await event.send(chain)
+                if not isinstance(segment, Plain):
+                    self._mark_sticker_used(segment)
             except Exception as e:
                 logger.error(f"发送分段消息失败：{e}", exc_info=True)
                 if is_streaming:
@@ -490,7 +540,7 @@ class StickerLLMMixin(StickerBaseMixin):
         if not self._is_runtime_injection_enabled():
             return
 
-        platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
+        platform_name = self._get_event_platform_name(event)
         is_matrix_platform = platform_name == "matrix"
         if not is_matrix_platform and not self._is_other_platforms_extension_enabled():
             return

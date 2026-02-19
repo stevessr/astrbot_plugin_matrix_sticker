@@ -44,6 +44,21 @@ class StickerStorageMixin:
             self._maybe_refresh_storage_index(force=False)
         return self._storage is not None
 
+    def _iter_platform_instances(self):
+        platform_manager = getattr(self.context, "platform_manager", None)
+        if platform_manager is None:
+            return []
+        get_insts = getattr(platform_manager, "get_insts", None)
+        if callable(get_insts):
+            try:
+                return list(get_insts())
+            except Exception:
+                pass
+        platforms = getattr(platform_manager, "platform_insts", None)
+        if isinstance(platforms, list):
+            return platforms
+        return []
+
     def _get_storage_reload_interval_seconds(self) -> float:
         interval = getattr(self, "_storage_reload_interval_seconds", 3.0)
         try:
@@ -104,7 +119,11 @@ class StickerStorageMixin:
         except Exception:
             pass
         limit = max(1, min(limit, max_limit))
-        return self._storage.list_stickers(limit=limit)
+        try:
+            return self._storage.list_stickers(limit=limit)
+        except Exception as e:
+            logger.debug(f"读取 sticker 列表失败：{e}")
+            return []
 
     def _get_storage_sticker(self, sticker_id: str, update_usage: bool = True):
         if self._storage is None:
@@ -122,6 +141,10 @@ class StickerStorageMixin:
             return
         sticker_id = getattr(sticker, "sticker_id", None)
         if not sticker_id:
+            return
+        touch_usage = getattr(self._storage, "touch_sticker_usage", None)
+        if callable(touch_usage):
+            touch_usage(str(sticker_id))
             return
         self._get_storage_sticker(str(sticker_id), update_usage=True)
 
@@ -339,7 +362,7 @@ class StickerStorageMixin:
         try:
             platform_id = str(event.get_platform_id() or "")
             fallback_syncer = None
-            for platform in self.context.platform_manager.get_insts():
+            for platform in self._iter_platform_instances():
                 syncer = getattr(platform, "sticker_syncer", None)
                 if syncer is None:
                     continue
@@ -363,7 +386,7 @@ class StickerStorageMixin:
         try:
             platform_id = str(event.get_platform_id() or "")
             fallback_client = None
-            for platform in self.context.platform_manager.get_insts():
+            for platform in self._iter_platform_instances():
                 if not hasattr(platform, "client"):
                     continue
                 try:

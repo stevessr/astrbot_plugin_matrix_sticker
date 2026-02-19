@@ -95,26 +95,44 @@ class MatrixStickerPlugin(
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
         if "emoji_shortcodes" in self.config:
-            return bool(self.config.get("emoji_shortcodes"))
+            return self._parse_bool_like(self.config.get("emoji_shortcodes"), False)
         if "matrix_sticker_emoji_shortcodes" in self.config:
-            return bool(self.config.get("matrix_sticker_emoji_shortcodes"))
-        return bool(self.config.get("matrix_emoji_shortcodes", False))
+            return self._parse_bool_like(
+                self.config.get("matrix_sticker_emoji_shortcodes"),
+                False,
+            )
+        return self._parse_bool_like(self.config.get("matrix_emoji_shortcodes", False), False)
 
     def _is_shortcode_strict_mode(self) -> bool:
         if "emoji_shortcodes_strict_mode" in self.config:
-            return bool(self.config.get("emoji_shortcodes_strict_mode"))
+            return self._parse_bool_like(
+                self.config.get("emoji_shortcodes_strict_mode"),
+                False,
+            )
         if "matrix_sticker_shortcode_strict_mode" in self.config:
-            return bool(self.config.get("matrix_sticker_shortcode_strict_mode"))
-        return bool(self.config.get("matrix_emoji_shortcodes_strict_mode", False))
+            return self._parse_bool_like(
+                self.config.get("matrix_sticker_shortcode_strict_mode"),
+                False,
+            )
+        return self._parse_bool_like(
+            self.config.get("matrix_emoji_shortcodes_strict_mode", False),
+            False,
+        )
 
     def _is_sticker_auto_sync_enabled(self) -> bool:
-        return bool(self.config.get("matrix_sticker_auto_sync", False))
+        return self._parse_bool_like(
+            self.config.get("matrix_sticker_auto_sync", False),
+            False,
+        )
 
     def _is_sticker_sync_user_emotes_enabled(self) -> bool:
-        return bool(self.config.get("matrix_sticker_sync_user_emotes", False))
+        return self._parse_bool_like(
+            self.config.get("matrix_sticker_sync_user_emotes", False),
+            False,
+        )
 
     def _iter_matrix_platforms(self):
-        for platform in self.context.platform_manager.get_insts():
+        for platform in self._iter_platform_instances():
             if not hasattr(platform, "sticker_syncer") or not hasattr(
                 platform, "client"
             ):
@@ -401,8 +419,8 @@ class MatrixStickerPlugin(
                     f"{current}\n"
                     "可选值：on | off\n"
                     "用法：/sticker mode <on|off>\n"
-                    "说明：兼容旧参数 inject/fc/hybrid；"
-                    "sticker_search/sticker_send 工具默认启用，停用请在 WebUI 手动操作。"
+                    "说明：仅控制提示词注入；"
+                    "sticker_search/sticker_send 工具默认启用，启停请在 WebUI 手动操作。"
                 )
                 return
 
@@ -559,6 +577,8 @@ class MatrixStickerPlugin(
             return f"Invalid match_mode: {match_mode_norm}. Use one of: {', '.join(sorted(valid_match))}."
         if room_scope_norm not in valid_scope:
             return f"Invalid room_scope: {room_scope_norm}. Use one of: {', '.join(sorted(valid_scope))}."
+        if room_scope_norm == "room" and not current_room_id:
+            return "Current room context is unavailable; cannot apply room_scope=room."
 
         regex = None
         if keyword_norm and match_mode_norm == "regex":
@@ -721,21 +741,48 @@ class MatrixStickerPlugin(
         if not self._ensure_storage():
             return "Sticker storage is not ready."
 
-        identifier = str(sticker_id or "").strip() or str(shortcode or "").strip()
+        sticker_id_value = str(sticker_id or "").strip()
+        shortcode_value = str(shortcode or "").strip()
+        identifier = sticker_id_value or shortcode_value
         if not identifier:
             return "Please provide sticker_id or shortcode."
 
         sticker = None
         usage_recorded = False
-        if sticker_id:
-            sticker = self._get_storage_sticker(identifier, update_usage=True)
+        if sticker_id_value:
+            sticker = self._get_storage_sticker(sticker_id_value, update_usage=True)
             usage_recorded = sticker is not None
+        shortcode_candidates: list[str] = []
+        if shortcode_value:
+            shortcode_candidates.append(shortcode_value)
+        elif identifier:
+            shortcode_candidates.append(identifier)
         if sticker is None:
-            sticker = self._find_sticker_by_shortcode(identifier)
+            for candidate in shortcode_candidates:
+                sticker = self._find_sticker_by_shortcode(candidate)
+                if sticker is not None:
+                    identifier = candidate
+                    break
         if sticker is None:
-            results = self._storage.find_stickers(query=identifier, limit=1)
-            if results:
-                sticker = results[0]
+            query_candidates = [
+                candidate
+                for candidate in (sticker_id_value, shortcode_value, identifier)
+                if candidate
+            ]
+            dedup_query_candidates: list[str] = []
+            seen_queries: set[str] = set()
+            for candidate in query_candidates:
+                candidate_norm = candidate.strip().lower()
+                if candidate_norm in seen_queries:
+                    continue
+                seen_queries.add(candidate_norm)
+                dedup_query_candidates.append(candidate)
+            for candidate in dedup_query_candidates:
+                results = self._storage.find_stickers(query=candidate, limit=1)
+                if results:
+                    sticker = results[0]
+                    identifier = candidate
+                    break
         if sticker is None:
             return f"Sticker not found: {identifier}"
 
@@ -746,7 +793,9 @@ class MatrixStickerPlugin(
             if reply_id:
                 chain_items.append(Reply(id=reply_id))
 
-        platform_name = getattr(getattr(event, "platform_meta", None), "name", "")
+        platform_name = ""
+        if hasattr(event, "get_platform_name"):
+            platform_name = str(event.get_platform_name() or "")
         if platform_name == "matrix":
             chain_items.append(sticker)
         else:
