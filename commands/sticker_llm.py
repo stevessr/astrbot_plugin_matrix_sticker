@@ -104,18 +104,11 @@ class StickerLLMMixin(StickerBaseMixin):
     def _get_prompt_injection_mode(self) -> str:
         config = getattr(self, "config", None) or {}
         prompt_injection = config.get("matrix_sticker_prompt_injection")
-        if prompt_injection is not None:
-            if isinstance(prompt_injection, bool):
-                return "on" if prompt_injection else "off"
-            return self._normalize_prompt_injection_mode(prompt_injection)
-
-        mode = config.get("matrix_sticker_llm_mode")
-        if mode is not None:
-            return self._normalize_prompt_injection_mode(mode)
-
-        if bool(config.get("matrix_sticker_fc_mode", False)):
-            return "off"
-        return self._DEFAULT_PROMPT_INJECTION_MODE
+        if prompt_injection is None:
+            return self._DEFAULT_PROMPT_INJECTION_MODE
+        if isinstance(prompt_injection, bool):
+            return "on" if prompt_injection else "off"
+        return self._normalize_prompt_injection_mode(prompt_injection)
 
     def _is_runtime_injection_enabled(self) -> bool:
         return self._get_prompt_injection_mode() == "on"

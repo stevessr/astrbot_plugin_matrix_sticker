@@ -4,6 +4,7 @@ Matrix sticker storage mixin - 存储和基础命令
 
 import importlib
 import sys
+import time
 from pathlib import Path
 
 from astrbot.api import logger
@@ -36,33 +37,83 @@ class StickerStorageMixin:
             self._StickerInfo = None
 
     def _ensure_storage(self):
-        """确保存储已初始化并刷新索引"""
+        """确保存储已初始化，并按节流策略刷新索引。"""
         if self._storage is None:
             self._init_sticker_module()
         if self._storage is not None:
-            if hasattr(self._storage, "reload_index"):
-                self._storage.reload_index()
-            elif hasattr(self._storage, "_load_index"):
-                self._storage._load_index()
+            self._maybe_refresh_storage_index(force=False)
         return self._storage is not None
+
+    def _get_storage_reload_interval_seconds(self) -> float:
+        interval = getattr(self, "_storage_reload_interval_seconds", 3.0)
+        try:
+            return max(0.0, float(interval))
+        except (TypeError, ValueError):
+            return 3.0
+
+    def _invalidate_sticker_lookup_cache(self) -> None:
+        self._shortcode_lookup_cache = None
+        self._last_storage_reload_monotonic = 0.0
+
+    def _maybe_refresh_storage_index(self, force: bool = False) -> bool:
+        if self._storage is None:
+            return False
+        now = time.monotonic()
+        last_reload = float(getattr(self, "_last_storage_reload_monotonic", 0.0))
+        interval = self._get_storage_reload_interval_seconds()
+        should_reload = force or interval <= 0.0 or (now - last_reload) >= interval
+        if not should_reload:
+            return False
+        if hasattr(self._storage, "reload_index"):
+            self._storage.reload_index()
+        elif hasattr(self._storage, "_load_index"):
+            self._storage._load_index()
+        self._last_storage_reload_monotonic = now
+        self._shortcode_lookup_cache = None
+        return True
+
+    def _build_shortcode_lookup_cache(self) -> dict[str, str]:
+        if self._storage is None:
+            return {}
+        lookup: dict[str, str] = {}
+        for meta in self._storage.list_stickers(limit=5000):
+            sticker_id = getattr(meta, "sticker_id", "")
+            body = str(getattr(meta, "body", "") or "").strip().lower()
+            if body and sticker_id and body not in lookup:
+                lookup[body] = sticker_id
+            raw_tags = getattr(meta, "tags", None) or []
+            for tag in raw_tags:
+                tag_norm = str(tag or "").strip().lower()
+                if tag_norm and sticker_id and tag_norm not in lookup:
+                    lookup[tag_norm] = sticker_id
+        return lookup
 
     def _find_sticker_by_shortcode(self, shortcode: str):
         """根据短码查找 sticker（支持 body 和别名）"""
         if self._storage is None:
             return None
 
-        all_stickers = self._storage.list_stickers(limit=1000)
+        shortcode_norm = str(shortcode or "").strip().lower()
+        if not shortcode_norm:
+            return None
 
-        for meta in all_stickers:
-            if meta.body.lower() == shortcode.lower():
-                return self._storage.get_sticker(meta.sticker_id)
+        lookup = getattr(self, "_shortcode_lookup_cache", None)
+        if lookup is None:
+            lookup = self._build_shortcode_lookup_cache()
+            self._shortcode_lookup_cache = lookup
 
-        for meta in all_stickers:
-            if meta.tags and shortcode.lower() in [t.lower() for t in meta.tags]:
-                return self._storage.get_sticker(meta.sticker_id)
+        sticker_id = lookup.get(shortcode_norm)
+        if sticker_id:
+            sticker = self._storage.get_sticker(sticker_id)
+            if sticker is not None:
+                return sticker
+            lookup.pop(shortcode_norm, None)
 
         results = self._storage.find_stickers(query=shortcode, limit=1)
         if results:
+            matched_id = getattr(results[0], "sticker_id", None)
+            if matched_id:
+                lookup[shortcode_norm] = matched_id
             return results[0]
 
         return None
@@ -151,6 +202,7 @@ class StickerStorageMixin:
                 client=client,
                 pack_name=pack_name,
             )
+            self._invalidate_sticker_lookup_cache()
             return f"已保存 sticker: {meta.sticker_id[:8]} ({name})"
         except Exception as e:
             logger.error(f"保存 sticker 失败：{e}")
@@ -159,6 +211,9 @@ class StickerStorageMixin:
     async def cmd_send_sticker(self, event: AstrMessageEvent, identifier: str):
         """发送 sticker"""
         sticker = self._storage.get_sticker(identifier)
+
+        if sticker is None:
+            sticker = self._find_sticker_by_shortcode(identifier)
 
         if sticker is None:
             results = self._storage.find_stickers(query=identifier, limit=1)
@@ -179,6 +234,7 @@ class StickerStorageMixin:
     def cmd_delete_sticker(self, sticker_id: str) -> str:
         """删除 sticker"""
         if self._storage.delete_sticker(sticker_id):
+            self._invalidate_sticker_lookup_cache()
             return f"已删除 sticker: {sticker_id}"
         return f"未找到 sticker: {sticker_id}"
 
@@ -207,11 +263,7 @@ class StickerStorageMixin:
             if not room_id:
                 return "无法获取当前房间 ID"
 
-            syncer = None
-            for platform in self.context.platform_manager.get_insts():
-                if hasattr(platform, "sticker_syncer"):
-                    syncer = platform.sticker_syncer
-                    break
+            syncer = self._get_matrix_syncer(event)
 
             if syncer is None:
                 return "未找到 Matrix 适配器的 sticker 同步器"
@@ -234,12 +286,48 @@ class StickerStorageMixin:
             logger.error(f"同步房间 sticker 失败：{e}")
             return f"同步失败：{e}"
 
+    def _get_matrix_syncer(self, event: AstrMessageEvent):
+        try:
+            platform_id = str(event.get_platform_id() or "")
+            fallback_syncer = None
+            for platform in self.context.platform_manager.get_insts():
+                syncer = getattr(platform, "sticker_syncer", None)
+                if syncer is None:
+                    continue
+                try:
+                    meta = platform.meta()
+                except Exception:
+                    meta = None
+                if getattr(meta, "name", "") != "matrix":
+                    continue
+                if platform_id and str(getattr(meta, "id", "") or "") == platform_id:
+                    return syncer
+                if fallback_syncer is None:
+                    fallback_syncer = syncer
+            return fallback_syncer
+        except Exception as e:
+            logger.debug(f"获取 Matrix sticker 同步器失败：{e}")
+        return None
+
     def _get_matrix_client(self, event: AstrMessageEvent):
         """获取 Matrix 客户端"""
         try:
+            platform_id = str(event.get_platform_id() or "")
+            fallback_client = None
             for platform in self.context.platform_manager.get_insts():
-                if hasattr(platform, "client") and hasattr(platform, "_matrix_config"):
+                if not hasattr(platform, "client"):
+                    continue
+                try:
+                    meta = platform.meta()
+                except Exception:
+                    meta = None
+                if getattr(meta, "name", "") != "matrix":
+                    continue
+                if platform_id and str(getattr(meta, "id", "") or "") == platform_id:
                     return platform.client
+                if fallback_client is None:
+                    fallback_client = platform.client
+            return fallback_client
         except Exception as e:
             logger.debug(f"获取 Matrix 客户端失败：{e}")
         return None

@@ -20,6 +20,7 @@ class StickerAliasMixin(StickerBaseMixin):
 说明：
 - sticker_id 可以是完整 ID 或前 8 位
 - 别名可以用作短码，如 :alias:
+- add/remove 需要管理员权限
 - 别名存储在 sticker 的 tags 字段中"""
 
     def cmd_add_alias(self, sticker_id: str, alias: str) -> str:
@@ -41,6 +42,7 @@ class StickerAliasMixin(StickerBaseMixin):
 
         sticker_meta.tags.append(alias)
         self._storage._save_index()
+        self._invalidate_sticker_lookup_cache()
 
         return f"已为 sticker {sticker_meta.sticker_id[:8]} 添加别名：{alias}"
 
@@ -60,6 +62,7 @@ class StickerAliasMixin(StickerBaseMixin):
 
         sticker_meta.tags.remove(alias)
         self._storage._save_index()
+        self._invalidate_sticker_lookup_cache()
 
         return f"已移除别名：{alias}"
 

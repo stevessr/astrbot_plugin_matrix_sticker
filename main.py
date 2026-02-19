@@ -28,7 +28,7 @@ from .emoji_shortcodes import configure_emoji_shortcodes, warmup_emoji_shortcode
 @register(
     name="astrbot_plugin_matrix_sticker",
     desc="Matrix Sticker 管理插件，提供 sticker 保存、列表和发送命令",
-    version="1.0.0",
+    version="1.0.1",
     author="AstrBot",
 )
 class MatrixStickerPlugin(
@@ -40,6 +40,16 @@ class MatrixStickerPlugin(
     """Matrix Sticker 管理插件"""
 
     _AUTO_SYNC_INTERVAL_SECONDS = 180
+    _DEFAULT_STORAGE_RELOAD_INTERVAL_SECONDS = 3.0
+    _MUTATING_STICKER_SUBCOMMANDS = {
+        "save",
+        "delete",
+        "sync",
+        "addroom",
+        "removeroom",
+        "mode",
+    }
+    _MUTATING_ALIAS_SUBCOMMANDS = {"add", "remove"}
 
     def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context, config)
@@ -52,6 +62,11 @@ class MatrixStickerPlugin(
         self._startup_sync_task: asyncio.Task | None = None
         self._user_synced_platform_ids: set[str] = set()
         self._availability_reset_platform_ids: set[str] = set()
+        self._shortcode_lookup_cache: dict[str, str] | None = None
+        self._last_storage_reload_monotonic = 0.0
+        self._storage_reload_interval_seconds = (
+            self._resolve_storage_reload_interval_seconds()
+        )
 
         configure_emoji_shortcodes(
             enabled=self._is_emoji_shortcodes_enabled(),
@@ -60,6 +75,23 @@ class MatrixStickerPlugin(
         warmup_emoji_shortcodes(fetch_remote=False)
 
         self._init_sticker_module()
+
+    def _resolve_storage_reload_interval_seconds(self) -> float:
+        raw_value = self.config.get(
+            "matrix_sticker_index_reload_interval_seconds",
+            self._DEFAULT_STORAGE_RELOAD_INTERVAL_SECONDS,
+        )
+        try:
+            return max(0.0, float(raw_value))
+        except (TypeError, ValueError):
+            return self._DEFAULT_STORAGE_RELOAD_INTERVAL_SECONDS
+
+    @staticmethod
+    def _is_admin_event(event: AstrMessageEvent) -> bool:
+        try:
+            return bool(event.is_admin())
+        except Exception:
+            return False
 
     def _is_emoji_shortcodes_enabled(self) -> bool:
         if "emoji_shortcodes" in self.config:
@@ -268,6 +300,13 @@ class MatrixStickerPlugin(
 
         subcommand = args[1].lower() if len(args) > 1 else "help"
 
+        if (
+            subcommand in self._MUTATING_STICKER_SUBCOMMANDS
+            and not self._is_admin_event(event)
+        ):
+            yield event.plain_result("权限不足：该子命令仅管理员可用。")
+            return
+
         if subcommand == "help":
             yield event.plain_result(self._get_help_text())
 
@@ -410,6 +449,13 @@ class MatrixStickerPlugin(
             return
 
         subcommand = args[1].lower()
+
+        if (
+            subcommand in self._MUTATING_ALIAS_SUBCOMMANDS
+            and not self._is_admin_event(event)
+        ):
+            yield event.plain_result("权限不足：该子命令仅管理员可用。")
+            return
 
         if subcommand == "add":
             if len(args) < 4:

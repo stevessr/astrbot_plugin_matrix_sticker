@@ -37,6 +37,7 @@ class StickerManageMixin(StickerBaseMixin):
 - 回复一条包含 sticker 的消息并使用 /sticker save 来保存
 - 使用 /sticker send 来发送已保存的 sticker
 - 使用 /sticker sync 来同步房间的自定义 sticker
+- /sticker save|delete|sync|addroom|removeroom|mode 需要管理员权限
 - 添加房间表情需要房间管理员权限
 - LLM 会自动获知可用的 sticker 短码
 - 在消息中使用 :shortcode: 格式会自动替换为 sticker"""
