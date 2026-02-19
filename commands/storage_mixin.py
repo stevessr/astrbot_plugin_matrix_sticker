@@ -286,7 +286,11 @@ class StickerStorageMixin:
             sticker = self._find_sticker_by_shortcode(identifier)
 
         if sticker is None:
-            results = self._storage.find_stickers(query=identifier, limit=1)
+            try:
+                results = self._storage.find_stickers(query=identifier, limit=1)
+            except Exception as e:
+                logger.debug(f"按关键词查找 sticker 失败：{e}")
+                results = []
             if results:
                 sticker = results[0]
 
