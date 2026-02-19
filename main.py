@@ -776,14 +776,21 @@ class MatrixStickerPlugin(
             "Use tool sticker_send with sticker_id to send one.",
         ]
         for idx, (meta, score, meta_tags) in enumerate(page, start=offset + 1):
-            tags_text = ", ".join(meta_tags[:8]) if meta_tags else "-"
+            normalized_tags = [
+                str(tag).strip() for tag in meta_tags if str(tag).strip()
+            ]
+            tags_text = ", ".join(normalized_tags[:8]) if normalized_tags else "-"
             file_path_text, file_exists = self._format_local_file_path(
                 getattr(meta, "local_path", None)
             )
+            sticker_id = str(getattr(meta, "sticker_id", "") or "-")
+            body = str(getattr(meta, "body", "") or "")
+            pack_name_text = str(getattr(meta, "pack_name", "") or "-")
+            use_count = self._to_int(getattr(meta, "use_count", 0))
             lines.append(
-                f"{idx}. id={meta.sticker_id} shortcode=:{meta.body}: "
-                f"pack={meta.pack_name or '-'} tags={tags_text} "
-                f"used={meta.use_count} "
+                f"{idx}. id={sticker_id} shortcode=:{body}: "
+                f"pack={pack_name_text} tags={tags_text} "
+                f"used={use_count} "
                 f"last={self._format_timestamp(getattr(meta, 'last_used', None))} "
                 f"score={score:.2f} "
                 f"file_path={file_path_text} "
