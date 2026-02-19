@@ -29,6 +29,12 @@
     "hint": "控制是否向 LLM 提示词注入可用 Sticker 短码。sticker_search/sticker_send 工具默认启用，启停请在 WebUI 手动管理",
     "default": true
   },
+  "matrix_sticker_index_reload_interval_seconds": {
+    "description": "Sticker 索引刷新间隔（秒）",
+    "type": "float",
+    "hint": "控制索引刷新最小间隔，0 表示每次操作都刷新。默认 3 秒，用于降低高频查找开销",
+    "default": 3.0
+  },
   "matrix_sticker_auto_sync": {
     "description": "自动同步 Sticker 包",
     "type": "bool",

@@ -60,6 +60,7 @@ Matrix Sticker 管理插件，提供 sticker 保存、列表、发送与别名�
 - `matrix_sticker_full_intercept`：完全拦截回复并按 :shortcode: 分段发送，短码会转为 sticker；需要 Matrix 适配器开启流式发送禁用编辑（默认 false）。
 - `matrix_sticker_enable_other_platforms`：在非 Matrix 平台启用 sticker 扩展。开启后会注入短码到提示词，并将命中的 `:shortcode:` 转为图片组件发送（默认 false）。
 - `matrix_sticker_prompt_injection`：是否向 LLM 提示词注入可用 sticker 短码（默认 true）。
+- `matrix_sticker_index_reload_interval_seconds`：索引自动刷新最小间隔（秒，默认 3）。设置为 0 可在每次请求都强制刷新（性能开销更高）。
 - `matrix_sticker_auto_sync`：自动同步房间 Sticker 包（默认 false）。
 - `matrix_sticker_sync_user_emotes`：同步用户级别 Sticker 包（默认 false）。
 - `emoji_shortcodes`：启用 Emoji 短码转换（对所有适配器生效，默认 false）。
@@ -67,7 +68,7 @@ Matrix Sticker 管理插件，提供 sticker 保存、列表、发送与别名�
 
 ### FC 工具
 
-- `sticker_search`：高级搜索 Sticker（支持关键字、标签、包名、匹配模式、排序、分页、作用域）。
+- `sticker_search`：高级搜索 Sticker（支持关键字、标签、包名、匹配模式、排序、分页、作用域）。结果包含本地物理路径与是否存在。
 - `sticker_send`：通过 `sticker_id` 或 `shortcode` 发送 Sticker（非 Matrix 平台会自动转图片组件发送）。
 - 工具默认启用；如需停用，请在 WebUI 的工具管理页面手动操作。
 

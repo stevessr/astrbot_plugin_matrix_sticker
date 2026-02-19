@@ -260,6 +260,19 @@ class MatrixStickerPlugin(
         return [item.strip() for item in value.split(",") if item.strip()]
 
     @staticmethod
+    def _parse_bool_like(value: Any, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        raw = str(value).strip().lower()
+        if raw in {"1", "true", "yes", "on", "enable", "enabled"}:
+            return True
+        if raw in {"0", "false", "no", "off", "disable", "disabled"}:
+            return False
+        return default
+
+    @staticmethod
     def _format_timestamp(ts: float | None) -> str:
         if not ts:
             return "-"
@@ -515,7 +528,7 @@ class MatrixStickerPlugin(
             sort_by(string): Sort mode: relevance, recent, popular, created, name.
             match_mode(string): Match mode for keyword: fuzzy, exact, regex.
             include_alias(boolean): Whether aliases/tags are used for keyword matching.
-            room_scope(string): Scope filter: all, room, user.
+            room_scope(string): Scope filter: all, room(current room only), user.
         """
         if not self._ensure_storage():
             return "Sticker storage is not ready."
@@ -533,6 +546,8 @@ class MatrixStickerPlugin(
         room_scope_norm = str(room_scope or "all").strip().lower()
         keyword_norm = str(keyword or "").strip()
         pack_name_norm = str(pack_name or "").strip().lower()
+        include_alias_flag = self._parse_bool_like(include_alias, True)
+        current_room_id = str(event.get_session_id() or "")
         tag_filters = [tag.lower() for tag in self._split_csv_items(tags)]
 
         valid_sort = {"relevance", "recent", "popular", "created", "name"}
@@ -570,8 +585,11 @@ class MatrixStickerPlugin(
             if pack_name_norm and pack_name_norm not in pack.lower():
                 continue
 
-            if room_scope_norm == "room" and not room_id:
-                continue
+            if room_scope_norm == "room":
+                if not room_id:
+                    continue
+                if current_room_id and str(room_id) != current_room_id:
+                    continue
             if room_scope_norm == "user" and room_id:
                 continue
 
@@ -589,13 +607,13 @@ class MatrixStickerPlugin(
                     if pack.lower() == keyword_lower:
                         score += 4.0
                         matched = True
-                    if include_alias and keyword_lower in meta_tags_lower:
+                    if include_alias_flag and keyword_lower in meta_tags_lower:
                         score += 6.0
                         matched = True
 
                 elif match_mode_norm == "regex":
                     fields = [body, pack]
-                    if include_alias:
+                    if include_alias_flag:
                         fields.extend(meta_tags)
                     hits = sum(1 for field in fields if regex and regex.search(field))
                     if hits > 0:
@@ -609,7 +627,7 @@ class MatrixStickerPlugin(
                     if keyword_lower in pack.lower():
                         score += 2.0
                         matched = True
-                    if include_alias and any(
+                    if include_alias_flag and any(
                         keyword_lower in tag for tag in meta_tags_lower
                     ):
                         score += 1.5
@@ -720,7 +738,8 @@ class MatrixStickerPlugin(
             return f"Sticker not found: {identifier}"
 
         chain_items = []
-        if bool(reply):
+        reply_enabled = self._parse_bool_like(reply, True)
+        if reply_enabled:
             reply_id = self._get_reply_event_id(event)
             if reply_id:
                 chain_items.append(Reply(id=reply_id))
@@ -772,6 +791,9 @@ class MatrixStickerPlugin(
         self._ensure_startup_sync_task()
 
     async def terminate(self):
+        self._shortcode_lookup_cache = None
+        self._last_storage_reload_monotonic = 0.0
+
         if self._startup_sync_task and not self._startup_sync_task.done():
             self._startup_sync_task.cancel()
             try:

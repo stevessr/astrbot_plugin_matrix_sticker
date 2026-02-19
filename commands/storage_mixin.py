@@ -109,12 +109,21 @@ class StickerStorageMixin:
                 return sticker
             lookup.pop(shortcode_norm, None)
 
-        results = self._storage.find_stickers(query=shortcode, limit=1)
-        if results:
-            matched_id = getattr(results[0], "sticker_id", None)
-            if matched_id:
-                lookup[shortcode_norm] = matched_id
-            return results[0]
+        results = self._storage.find_stickers(query=shortcode, limit=10)
+        for sticker in results:
+            sticker_body = str(getattr(sticker, "body", "") or "").strip().lower()
+            if sticker_body == shortcode_norm:
+                matched_id = getattr(sticker, "sticker_id", None)
+                if matched_id:
+                    lookup[shortcode_norm] = matched_id
+                return sticker
+            sticker_tags = getattr(sticker, "tags", None) or []
+            tags_norm = {str(tag or "").strip().lower() for tag in sticker_tags}
+            if shortcode_norm in tags_norm:
+                matched_id = getattr(sticker, "sticker_id", None)
+                if matched_id:
+                    lookup[shortcode_norm] = matched_id
+                return sticker
 
         return None
 
@@ -259,7 +268,7 @@ class StickerStorageMixin:
     async def cmd_sync_room_stickers(self, event: AstrMessageEvent) -> str:
         """同步当前房间的 sticker 包"""
         try:
-            room_id = event.session_id
+            room_id = event.get_session_id()
             if not room_id:
                 return "无法获取当前房间 ID"
 
