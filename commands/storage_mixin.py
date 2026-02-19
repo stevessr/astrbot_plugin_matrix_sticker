@@ -64,10 +64,14 @@ class StickerStorageMixin:
         should_reload = force or interval <= 0.0 or (now - last_reload) >= interval
         if not should_reload:
             return False
-        if hasattr(self._storage, "reload_index"):
-            self._storage.reload_index()
-        elif hasattr(self._storage, "_load_index"):
-            self._storage._load_index()
+        try:
+            if hasattr(self._storage, "reload_index"):
+                self._storage.reload_index()
+            elif hasattr(self._storage, "_load_index"):
+                self._storage._load_index()
+        except Exception as e:
+            logger.debug(f"刷新 sticker 索引失败：{e}")
+            return False
         self._last_storage_reload_monotonic = now
         self._shortcode_lookup_cache = None
         return True
@@ -76,7 +80,7 @@ class StickerStorageMixin:
         if self._storage is None:
             return {}
         lookup: dict[str, str] = {}
-        for meta in self._storage.list_stickers(limit=5000):
+        for meta in self._list_all_sticker_metas(max_limit=20000):
             sticker_id = getattr(meta, "sticker_id", "")
             body = str(getattr(meta, "body", "") or "").strip().lower()
             if body and sticker_id and body not in lookup:
@@ -87,6 +91,39 @@ class StickerStorageMixin:
                 if tag_norm and sticker_id and tag_norm not in lookup:
                     lookup[tag_norm] = sticker_id
         return lookup
+
+    def _list_all_sticker_metas(self, max_limit: int = 20000) -> list:
+        if self._storage is None:
+            return []
+        limit = 5000
+        try:
+            stats = self._storage.get_stats()
+            total_count = int(stats.get("total_count", 0))
+            if total_count > 0:
+                limit = max(limit, total_count)
+        except Exception:
+            pass
+        limit = max(1, min(limit, max_limit))
+        return self._storage.list_stickers(limit=limit)
+
+    def _get_storage_sticker(self, sticker_id: str, update_usage: bool = True):
+        if self._storage is None:
+            return None
+        getter = getattr(self._storage, "get_sticker", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(sticker_id, update_usage=update_usage)
+        except TypeError:
+            return getter(sticker_id)
+
+    def _mark_sticker_used(self, sticker) -> None:
+        if self._storage is None:
+            return
+        sticker_id = getattr(sticker, "sticker_id", None)
+        if not sticker_id:
+            return
+        self._get_storage_sticker(str(sticker_id), update_usage=True)
 
     def _find_sticker_by_shortcode(self, shortcode: str):
         """根据短码查找 sticker（支持 body 和别名）"""
@@ -104,7 +141,7 @@ class StickerStorageMixin:
 
         sticker_id = lookup.get(shortcode_norm)
         if sticker_id:
-            sticker = self._storage.get_sticker(sticker_id)
+            sticker = self._get_storage_sticker(sticker_id, update_usage=False)
             if sticker is not None:
                 return sticker
             lookup.pop(shortcode_norm, None)
@@ -219,7 +256,8 @@ class StickerStorageMixin:
 
     async def cmd_send_sticker(self, event: AstrMessageEvent, identifier: str):
         """发送 sticker"""
-        sticker = self._storage.get_sticker(identifier)
+        sticker = self._get_storage_sticker(identifier, update_usage=True)
+        usage_recorded = sticker is not None
 
         if sticker is None:
             sticker = self._find_sticker_by_shortcode(identifier)
@@ -235,6 +273,8 @@ class StickerStorageMixin:
         try:
             chain = MessageChain([sticker])
             await event.send(chain)
+            if not usage_recorded:
+                self._mark_sticker_used(sticker)
             return None
         except Exception as e:
             logger.error(f"发送 sticker 失败：{e}")

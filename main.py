@@ -567,7 +567,7 @@ class MatrixStickerPlugin(
             except re.error as e:
                 return f"Invalid regex pattern: {e}"
 
-        metas = self._storage.list_stickers(limit=5000)
+        metas = self._list_all_sticker_metas(max_limit=20000)
         if not metas:
             return "No stickers found in storage."
 
@@ -726,8 +726,10 @@ class MatrixStickerPlugin(
             return "Please provide sticker_id or shortcode."
 
         sticker = None
+        usage_recorded = False
         if sticker_id:
-            sticker = self._storage.get_sticker(identifier)
+            sticker = self._get_storage_sticker(identifier, update_usage=True)
+            usage_recorded = sticker is not None
         if sticker is None:
             sticker = self._find_sticker_by_shortcode(identifier)
         if sticker is None:
@@ -757,6 +759,8 @@ class MatrixStickerPlugin(
             chain_items.append(image)
 
         await event.send(MessageChain(chain_items))
+        if not usage_recorded:
+            self._mark_sticker_used(sticker)
         sticker_id_out = getattr(sticker, "sticker_id", None) or "-"
         sticker_body_out = getattr(sticker, "body", None) or identifier
         return f"Sent sticker: :{sticker_body_out}: (id={sticker_id_out})"
