@@ -1,6 +1,6 @@
 name: astrbot_plugin_matrix_sticker
 display_name: Matrix Sticker 管理插件
 description: Matrix Sticker 管理插件，提供 sticker 保存、列表和发送命令
-version: 1.0.1
+version: 1.0.2
 author: stevessr
 repo: https://github.com/stevessr/astrbot_plugin_matrix_sticker
