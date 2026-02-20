@@ -247,12 +247,8 @@ class StickerLLMMixin(StickerBaseMixin):
                 client = getattr(platform, "client", None)
                 if client is None or not hasattr(client, "download_file"):
                     continue
-                try:
-                    meta = platform.meta()
-                    meta_name = str(getattr(meta, "name", "") or "").strip().lower()
-                    if meta_name != "matrix":
-                        continue
-                except Exception:
+                client_user_id = str(getattr(client, "user_id", "") or "")
+                if not client_user_id.startswith("@") or ":" not in client_user_id:
                     continue
                 return client
         except Exception as e:

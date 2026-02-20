@@ -141,14 +141,12 @@ class MatrixStickerPlugin(
                 platform, "client"
             ):
                 continue
-            try:
-                meta = platform.meta()
-                meta_name = str(getattr(meta, "name", "") or "").strip().lower()
-                if meta_name != "matrix":
-                    continue
-            except Exception:
-                if not hasattr(platform, "_matrix_config"):
-                    continue
+            client = getattr(platform, "client", None)
+            if client is None:
+                continue
+            client_user_id = str(getattr(client, "user_id", "") or "")
+            if not client_user_id.startswith("@") or ":" not in client_user_id:
+                continue
             yield platform
 
     def _platform_sync_key(self, platform) -> str:
