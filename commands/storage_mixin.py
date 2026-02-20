@@ -11,11 +11,35 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image, Reply
 
-from astrbot_plugin_matrix_adapter.utils import MatrixUtils
-
 
 class StickerStorageMixin:
     """Sticker 基础功能：初始化、存储、查找等"""
+
+    _matrix_utils_cls = None
+
+    def _get_matrix_utils_cls(self):
+        if self._matrix_utils_cls is not None:
+            return self._matrix_utils_cls
+
+        plugins_dir = Path(__file__).parent.parent.parent
+        if str(plugins_dir) not in sys.path:
+            sys.path.insert(0, str(plugins_dir))
+
+        try:
+            utils_module = importlib.import_module(
+                "astrbot_plugin_matrix_adapter.utils"
+            )
+        except ImportError as e:
+            logger.debug(f"无法导入 MatrixUtils：{e}")
+            return None
+
+        matrix_utils_cls = getattr(utils_module, "MatrixUtils", None)
+        if matrix_utils_cls is None:
+            logger.warning("astrbot_plugin_matrix_adapter.utils 中未找到 MatrixUtils")
+            return None
+
+        self._matrix_utils_cls = matrix_utils_cls
+        return matrix_utils_cls
 
     def _init_sticker_module(self):
         """初始化 sticker 模块（从 matrix adapter 导入）"""
@@ -47,7 +71,14 @@ class StickerStorageMixin:
         return self._storage is not None
 
     def _iter_platform_instances(self):
-        return MatrixUtils.iter_platform_instances(self.context)
+        matrix_utils_cls = self._get_matrix_utils_cls()
+        if matrix_utils_cls is None:
+            return []
+        try:
+            return matrix_utils_cls.iter_platform_instances(self.context)
+        except Exception as e:
+            logger.debug(f"获取平台实例失败：{e}")
+            return []
 
     def _get_storage_reload_interval_seconds(self) -> float:
         interval = getattr(self, "_storage_reload_interval_seconds", 3.0)
@@ -353,9 +384,12 @@ class StickerStorageMixin:
             return f"同步失败：{e}"
 
     def _get_matrix_syncer(self, event: AstrMessageEvent):
+        matrix_utils_cls = self._get_matrix_utils_cls()
+        if matrix_utils_cls is None:
+            return None
         try:
             platform_id = str(event.get_platform_id() or "")
-            platform = MatrixUtils.get_matrix_platform(self.context, platform_id)
+            platform = matrix_utils_cls.get_matrix_platform(self.context, platform_id)
             if platform is None:
                 return None
             return getattr(platform, "sticker_syncer", None)
@@ -365,9 +399,12 @@ class StickerStorageMixin:
 
     def _get_matrix_client(self, event: AstrMessageEvent):
         """获取 Matrix 客户端"""
+        matrix_utils_cls = self._get_matrix_utils_cls()
+        if matrix_utils_cls is None:
+            return None
         try:
             platform_id = str(event.get_platform_id() or "")
-            return MatrixUtils.get_matrix_client(self.context, platform_id)
+            return matrix_utils_cls.get_matrix_client(self.context, platform_id)
         except Exception as e:
             logger.debug(f"获取 Matrix 客户端失败：{e}")
         return None
