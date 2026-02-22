@@ -2,6 +2,7 @@
 Matrix sticker LLM mixin - LLM 相关 hook 逻辑
 """
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -255,6 +256,35 @@ class StickerLLMMixin(StickerBaseMixin):
             logger.debug(f"Resolve fallback matrix client failed: {e}")
         return None
 
+    @staticmethod
+    def _build_telegram_sticker_cache_key(sticker) -> str | None:
+        sticker_id = str(getattr(sticker, "sticker_id", "") or "").strip()
+        if sticker_id:
+            stable_id = sticker_id
+        else:
+            fallback_source = str(getattr(sticker, "url", "") or "").strip()
+            if not fallback_source:
+                fallback_source = str(getattr(sticker, "body", "") or "").strip()
+            if not fallback_source:
+                return None
+            stable_id = hashlib.sha256(fallback_source.encode("utf-8")).hexdigest()
+        return f"matrix_sticker:tg:image:{stable_id}"
+
+    @staticmethod
+    def _attach_telegram_file_unique(
+        image: Image,
+        sticker,
+        event: AstrMessageEvent | None,
+    ) -> None:
+        if event is None:
+            return
+        platform_name = str(getattr(event, "get_platform_name", lambda: "")() or "")
+        if platform_name.strip().lower() != "telegram":
+            return
+        file_unique = StickerLLMMixin._build_telegram_sticker_cache_key(sticker)
+        if file_unique:
+            image.file_unique = file_unique
+
     async def _build_image_component_from_sticker(
         self,
         sticker,
@@ -263,12 +293,15 @@ class StickerLLMMixin(StickerBaseMixin):
         try:
             local_path = self._resolve_sticker_local_path(sticker)
             if local_path:
-                return Image.fromFileSystem(local_path)
+                image = Image.fromFileSystem(local_path)
+                self._attach_telegram_file_unique(image, sticker, event)
+                return image
 
             sticker_url = str(getattr(sticker, "url", "") or "")
             if not sticker_url:
                 return None
 
+            image: Image | None = None
             if sticker_url.startswith("mxc://"):
                 matrix_client = self._resolve_matrix_download_client(event)
                 if matrix_client is None:
@@ -284,23 +317,25 @@ class StickerLLMMixin(StickerBaseMixin):
                     except TypeError:
                         image_bytes = await matrix_client.download_file(sticker_url)
                     if image_bytes:
-                        return Image.fromBytes(bytes(image_bytes))
+                        image = Image.fromBytes(bytes(image_bytes))
                 except Exception as e:
                     logger.debug(f"Download mxc sticker failed: {e}")
-                return None
-
-            if sticker_url.startswith("http://") or sticker_url.startswith("https://"):
-                return Image.fromURL(sticker_url)
-
-            if sticker_url.startswith("file:///") or sticker_url.startswith(
+                    return None
+                if image is None:
+                    return None
+            elif sticker_url.startswith("http://") or sticker_url.startswith("https://"):
+                image = Image.fromURL(sticker_url)
+            elif sticker_url.startswith("file:///") or sticker_url.startswith(
                 "base64://"
             ):
-                return Image(file=sticker_url)
+                image = Image(file=sticker_url)
+            elif Path(sticker_url).exists():
+                image = Image.fromFileSystem(sticker_url)
+            else:
+                image = Image(file=sticker_url)
 
-            if Path(sticker_url).exists():
-                return Image.fromFileSystem(sticker_url)
-
-            return Image(file=sticker_url)
+            self._attach_telegram_file_unique(image, sticker, event)
+            return image
         except Exception as e:
             logger.debug(f"Convert sticker to image failed: {e}")
             return None
