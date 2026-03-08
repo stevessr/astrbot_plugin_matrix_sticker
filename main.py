@@ -7,7 +7,6 @@ Matrix Sticker 管理插件
 
 import asyncio
 import math
-import re
 import shlex
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +46,7 @@ class MatrixStickerPlugin(
         "save",
         "delete",
         "sync",
+        "reindex",
         "addroom",
         "removeroom",
         "mode",
@@ -417,6 +417,11 @@ class MatrixStickerPlugin(
             result = self.cmd_list_packs()
             yield event.plain_result(result)
 
+        elif subcommand == "search":
+            keyword = " ".join(args[2:]).strip() if len(args) > 2 else ""
+            result = await self.cmd_search_stickers(event, keyword)
+            yield event.plain_result(result)
+
         elif subcommand == "save":
             if len(args) < 3:
                 yield event.plain_result("用法：/sticker save <name> [pack]")
@@ -440,7 +445,7 @@ class MatrixStickerPlugin(
                 yield event.plain_result("用法：/sticker delete <id>")
                 return
             sticker_id = args[2]
-            result = self.cmd_delete_sticker(sticker_id)
+            result = await self.cmd_delete_sticker(sticker_id)
             yield event.plain_result(result)
 
         elif subcommand == "stats":
@@ -449,6 +454,10 @@ class MatrixStickerPlugin(
 
         elif subcommand == "sync":
             result = await self.cmd_sync_room_stickers(event)
+            yield event.plain_result(result)
+
+        elif subcommand == "reindex":
+            result = await self.cmd_reindex_stickers()
             yield event.plain_result(result)
 
         elif subcommand == "addroom":
@@ -613,188 +622,18 @@ class MatrixStickerPlugin(
             include_alias(boolean): Whether aliases/tags are used for keyword matching.
             room_scope(string): Scope filter: all, room(current room only), user.
         """
-        if not self._ensure_storage():
-            return "Sticker storage is not ready."
-
-        try:
-            limit = max(1, min(int(limit or 10), 50))
-        except (TypeError, ValueError):
-            limit = 10
-        try:
-            offset = max(0, int(offset or 0))
-        except (TypeError, ValueError):
-            offset = 0
-        sort_by_norm = str(sort_by or "relevance").strip().lower()
-        match_mode_norm = str(match_mode or "fuzzy").strip().lower()
-        room_scope_norm = str(room_scope or "all").strip().lower()
-        keyword_norm = str(keyword or "").strip()
-        pack_name_norm = str(pack_name or "").strip().lower()
-        include_alias_flag = self._parse_bool_like(include_alias, True)
-        current_room_id = str(event.get_session_id() or "").strip()
-        tag_filters = [tag.lower() for tag in self._split_csv_items(tags)]
-
-        valid_sort = {"relevance", "recent", "popular", "created", "name"}
-        valid_match = {"fuzzy", "exact", "regex"}
-        valid_scope = {"all", "room", "user"}
-        if sort_by_norm not in valid_sort:
-            return f"Invalid sort_by: {sort_by_norm}. Use one of: {', '.join(sorted(valid_sort))}."
-        if match_mode_norm not in valid_match:
-            return f"Invalid match_mode: {match_mode_norm}. Use one of: {', '.join(sorted(valid_match))}."
-        if room_scope_norm not in valid_scope:
-            return f"Invalid room_scope: {room_scope_norm}. Use one of: {', '.join(sorted(valid_scope))}."
-        if room_scope_norm == "room" and not current_room_id:
-            return "Current room context is unavailable; cannot apply room_scope=room."
-
-        regex = None
-        if keyword_norm and match_mode_norm == "regex":
-            try:
-                regex = re.compile(keyword_norm, re.IGNORECASE)
-            except re.error as e:
-                return f"Invalid regex pattern: {e}"
-
-        metas = self._list_all_sticker_metas(max_limit=20000)
-        if not metas:
-            return "No stickers found in storage."
-
-        scored: list[tuple[Any, float, list[str]]] = []
-        keyword_lower = keyword_norm.lower()
-
-        for meta in metas:
-            body = str(getattr(meta, "body", "") or "")
-            pack = str(getattr(meta, "pack_name", "") or "")
-            room_id = getattr(meta, "room_id", None)
-            raw_tags = getattr(meta, "tags", None) or []
-            meta_tags = [str(tag) for tag in raw_tags if isinstance(tag, str) and tag]
-            meta_tags_lower = [tag.lower() for tag in meta_tags]
-
-            if pack_name_norm and pack_name_norm not in pack.lower():
-                continue
-
-            if room_scope_norm == "room":
-                if not room_id:
-                    continue
-                if current_room_id and str(room_id) != current_room_id:
-                    continue
-            if room_scope_norm == "user" and room_id:
-                continue
-
-            if tag_filters and any(tag not in meta_tags_lower for tag in tag_filters):
-                continue
-
-            score = 0.0
-            if keyword_norm:
-                matched = False
-
-                if match_mode_norm == "exact":
-                    if body.lower() == keyword_lower:
-                        score += 8.0
-                        matched = True
-                    if pack.lower() == keyword_lower:
-                        score += 4.0
-                        matched = True
-                    if include_alias_flag and keyword_lower in meta_tags_lower:
-                        score += 6.0
-                        matched = True
-
-                elif match_mode_norm == "regex":
-                    fields = [body, pack]
-                    if include_alias_flag:
-                        fields.extend(meta_tags)
-                    hits = sum(1 for field in fields if regex and regex.search(field))
-                    if hits > 0:
-                        score += float(hits * 2)
-                        matched = True
-
-                else:
-                    if keyword_lower in body.lower():
-                        score += 4.0
-                        matched = True
-                    if keyword_lower in pack.lower():
-                        score += 2.0
-                        matched = True
-                    if include_alias_flag and any(
-                        keyword_lower in tag for tag in meta_tags_lower
-                    ):
-                        score += 1.5
-                        matched = True
-
-                if not matched:
-                    continue
-
-            scored.append((meta, score, meta_tags))
-
-        total = len(scored)
-        if total == 0:
-            return "No stickers matched the filters."
-
-        if sort_by_norm == "recent":
-            scored.sort(
-                key=lambda item: (
-                    self._to_float(getattr(item[0], "last_used", 0.0)),
-                    self._to_float(getattr(item[0], "created_at", 0.0)),
-                ),
-                reverse=True,
-            )
-        elif sort_by_norm == "popular":
-            scored.sort(
-                key=lambda item: (
-                    self._to_int(getattr(item[0], "use_count", 0)),
-                    self._to_float(getattr(item[0], "last_used", 0.0)),
-                ),
-                reverse=True,
-            )
-        elif sort_by_norm == "created":
-            scored.sort(
-                key=lambda item: self._to_float(getattr(item[0], "created_at", 0.0)),
-                reverse=True,
-            )
-        elif sort_by_norm == "name":
-            scored.sort(
-                key=lambda item: str(getattr(item[0], "body", "") or "").lower()
-            )
-        else:
-            scored.sort(
-                key=lambda item: (
-                    item[1],
-                    self._to_int(getattr(item[0], "use_count", 0)),
-                    self._to_float(getattr(item[0], "last_used", 0.0)),
-                ),
-                reverse=True,
-            )
-
-        page = scored[offset : offset + limit]
-        if not page:
-            return f"No results at offset {offset}. Total matched: {total}."
-
-        lines = [
-            (
-                f"Sticker search matched {total} item(s), "
-                f"returning {len(page)} from offset {offset}."
-            ),
-            "Use tool sticker_send with sticker_id to send one.",
-        ]
-        for idx, (meta, score, meta_tags) in enumerate(page, start=offset + 1):
-            normalized_tags = [
-                str(tag).strip() for tag in meta_tags if str(tag).strip()
-            ]
-            tags_text = ", ".join(normalized_tags[:8]) if normalized_tags else "-"
-            file_path_text, file_exists = self._format_local_file_path(
-                getattr(meta, "local_path", None)
-            )
-            sticker_id = str(getattr(meta, "sticker_id", "") or "-")
-            body = str(getattr(meta, "body", "") or "")
-            pack_name_text = str(getattr(meta, "pack_name", "") or "-")
-            use_count = self._to_int(getattr(meta, "use_count", 0))
-            lines.append(
-                f"{idx}. id={sticker_id} shortcode=:{body}: "
-                f"pack={pack_name_text} tags={tags_text} "
-                f"used={use_count} "
-                f"last={self._format_timestamp(getattr(meta, 'last_used', None))} "
-                f"score={score:.2f} "
-                f"file_path={file_path_text} "
-                f"file_exists={'yes' if file_exists else 'no'}"
-            )
-        return "\n".join(lines)
+        return await self.search_stickers_for_tool(
+            event,
+            keyword=keyword,
+            pack_name=pack_name,
+            tags=tags,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            match_mode=match_mode,
+            include_alias=include_alias,
+            room_scope=room_scope,
+        )
 
     @filter.llm_tool(name="sticker_send")
     async def tool_sticker_send(
@@ -860,6 +699,11 @@ class MatrixStickerPlugin(
                     sticker = results[0]
                     identifier = candidate
                     break
+        if sticker is None and self._is_vector_search_enabled():
+            try:
+                sticker = await self._find_semantic_sticker_for_send(event, identifier)
+            except Exception as e:
+                logger.debug(f"Semantic sticker send fallback unavailable: {e}")
         if sticker is None:
             return f"Sticker not found: {identifier}"
 
@@ -939,3 +783,12 @@ class MatrixStickerPlugin(
             except asyncio.CancelledError:
                 pass
         self._auto_sync_task = None
+
+        vector_provider = getattr(self, "_vector_provider", None)
+        if vector_provider is not None:
+            try:
+                await vector_provider.terminate()
+            except Exception as e:
+                logger.debug(f"Terminate sticker vector provider failed: {e}")
+        self._vector_provider = None
+        self._vector_provider_cache_key = None

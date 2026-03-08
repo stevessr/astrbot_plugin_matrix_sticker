@@ -16,11 +16,13 @@ class StickerManageMixin(StickerBaseMixin):
 /sticker help - 显示此帮助
 /sticker list [pack] - 列出 sticker（可选按包过滤）
 /sticker packs - 列出所有 sticker 包
+/sticker search [keyword] - 检索 sticker（支持回复图片或图文联合查询）
 /sticker save <name> [pack] - 保存引用消息中的 sticker
 /sticker send <id|name> - 发送指定的 sticker
 /sticker delete <id> - 删除 sticker
 /sticker stats - 显示统计信息
 /sticker sync - 同步当前房间的 sticker 包
+/sticker reindex - 重建向量索引
 /sticker mode <on|off> - 开关 LLM 提示词注入（工具启停请在 WebUI 管理）
 
 房间表情管理（Matrix 专用）：
@@ -36,8 +38,10 @@ class StickerManageMixin(StickerBaseMixin):
 提示：
 - 回复一条包含 sticker 的消息并使用 /sticker save 来保存
 - 使用 /sticker send 来发送已保存的 sticker
+- 回复图片后可使用 /sticker search 做图片或图文联合检索
 - 使用 /sticker sync 来同步房间的自定义 sticker
-- /sticker save|delete|sync|addroom|removeroom|mode 需要管理员权限
+- /sticker save|delete|sync|reindex|addroom|removeroom|mode 需要管理员权限
+- 启用向量检索时，请在插件配置中填写 Vertex 项目、区域、模型与维度；不需要在 AstrBot 全局 provider 里额外创建 embedding provider
 - 添加房间表情需要房间管理员权限
 - LLM 会自动获知可用的 sticker 短码
 - 在消息中使用 :shortcode: 格式会自动替换为 sticker"""

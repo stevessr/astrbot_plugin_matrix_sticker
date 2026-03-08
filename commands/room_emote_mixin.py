@@ -2,8 +2,13 @@
 Matrix sticker room emote mixin
 """
 
+import mimetypes
+import uuid
+from pathlib import Path
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
+from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 
 class StickerRoomEmoteMixin:
@@ -70,6 +75,58 @@ class StickerRoomEmoteMixin:
         except Exception as e:
             logger.debug(f"获取引用图片失败：{e}")
             return None, None
+
+    @staticmethod
+    def _guess_image_suffix(mimetype: str | None) -> str:
+        mime_value = str(mimetype or "").split(";", 1)[0].strip().lower()
+        if mime_value == "image/jpeg":
+            return ".jpg"
+        suffix = mimetypes.guess_extension(mime_value)
+        return suffix or ".img"
+
+    async def _download_mxc_to_temp_file(
+        self,
+        event: AstrMessageEvent,
+        mxc_url: str,
+        mimetype: str | None = None,
+    ) -> str | None:
+        """委托 Matrix 适配器下载媒体到本地文件并返回路径。"""
+        if not mxc_url or not str(mxc_url).startswith("mxc://"):
+            return None
+        matrix_utils_cls = self._get_matrix_utils_cls()
+        if matrix_utils_cls is None:
+            return None
+        download_media_to_path = getattr(
+            matrix_utils_cls, "download_media_to_path", None
+        )
+        if not callable(download_media_to_path):
+            return None
+        file_path = (
+            Path(get_astrbot_temp_path())
+            / "matrix_sticker_query_images"
+            / f"{uuid.uuid4().hex}{self._guess_image_suffix(mimetype)}"
+        )
+        try:
+            downloaded_path = await download_media_to_path(
+                self.context,
+                mxc_url,
+                file_path,
+                platform_id=str(event.get_platform_id() or ""),
+                allow_thumbnail_fallback=True,
+            )
+        except Exception as e:
+            logger.debug(f"下载引用图片失败：{e}")
+            return None
+        if downloaded_path is None:
+            return None
+        return str(downloaded_path)
+
+    async def _get_reply_image_file_path(self, event: AstrMessageEvent) -> str | None:
+        """从引用消息中解析图片并下载到本地临时文件。"""
+        mxc_url, mimetype = await self._get_image_mxc_from_reply(event)
+        if not mxc_url:
+            return None
+        return await self._download_mxc_to_temp_file(event, mxc_url, mimetype)
 
     async def cmd_add_room_emote(
         self, event: AstrMessageEvent, shortcode: str, state_key: str = ""

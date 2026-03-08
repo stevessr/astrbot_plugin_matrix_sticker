@@ -219,11 +219,18 @@ class StickerLLMMixin(StickerBaseMixin):
         if not storage or not sticker_id:
             return None
 
-        index = getattr(storage, "_index", None)
-        if not isinstance(index, dict):
-            return None
+        meta = None
+        get_meta = getattr(storage, "get_sticker_meta", None)
+        if callable(get_meta):
+            try:
+                meta = get_meta(str(sticker_id))
+            except Exception as e:
+                logger.debug(f"Read sticker meta failed: {e}")
+        if meta is None:
+            index = getattr(storage, "_index", None)
+            if isinstance(index, dict):
+                meta = index.get(sticker_id)
 
-        meta = index.get(sticker_id)
         local_path = getattr(meta, "local_path", None) if meta else None
         if local_path and Path(local_path).exists():
             return str(local_path)
@@ -323,13 +330,15 @@ class StickerLLMMixin(StickerBaseMixin):
                     return None
                 if image is None:
                     return None
-            elif sticker_url.startswith("http://") or sticker_url.startswith("https://"):
+            elif sticker_url.startswith("http://") or sticker_url.startswith(
+                "https://"
+            ):
                 image = Image.fromURL(sticker_url)
             elif sticker_url.startswith("file:///") or sticker_url.startswith(
                 "base64://"
             ):
                 image = Image(file=sticker_url)
-            elif Path(sticker_url).exists():
+            elif sticker_url:
                 image = Image.fromFileSystem(sticker_url)
             else:
                 image = Image(file=sticker_url)

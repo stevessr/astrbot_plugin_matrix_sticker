@@ -47,6 +47,90 @@
     "hint": "是否同步用户级别 Sticker 包（im.ponies.user_emotes）",
     "default": false
   },
+  "matrix_sticker_vector_search_enabled": {
+    "description": "启用 Sticker 向量检索",
+    "type": "bool",
+    "hint": "开启后优先使用多模态向量检索；需配置支持 text/image 共享向量空间的 embedding provider",
+    "default": false
+  },
+  "matrix_sticker_embedding_model": {
+    "description": "Sticker 向量模型",
+    "type": "string",
+    "hint": "插件内置 Vertex 多模态 embedding 使用的模型名，默认 multimodalembedding@001",
+    "default": "multimodalembedding@001"
+  },
+  "matrix_sticker_embedding_dimensions": {
+    "description": "Sticker 向量维度",
+    "type": "int",
+    "hint": "Vertex 多模态 embedding 维度，可选 128 / 256 / 512 / 1408",
+    "default": 1408
+  },
+  "matrix_sticker_vertex_project": {
+    "description": "Sticker Vertex Project ID",
+    "type": "string",
+    "hint": "Google Cloud Project ID。若留空则尝试通过 ADC 自动检测",
+    "default": ""
+  },
+  "matrix_sticker_vertex_location": {
+    "description": "Sticker Vertex 区域",
+    "type": "string",
+    "hint": "Vertex AI 区域，默认 us-central1",
+    "default": "us-central1"
+  },
+  "matrix_sticker_embedding_api_base": {
+    "description": "Sticker Vertex API Base",
+    "type": "string",
+    "hint": "可选覆盖默认的 https://<region>-aiplatform.googleapis.com",
+    "default": ""
+  },
+  "matrix_sticker_embedding_timeout": {
+    "description": "Sticker 向量超时",
+    "type": "int",
+    "hint": "调用 Vertex 多模态 embedding 的超时时间（秒）",
+    "default": 20
+  },
+  "matrix_sticker_embedding_proxy": {
+    "description": "Sticker 向量代理",
+    "type": "string",
+    "hint": "可选 HTTP 代理地址",
+    "default": ""
+  },
+  "matrix_sticker_vector_top_k": {
+    "description": "Sticker 向量返回数量",
+    "type": "int",
+    "hint": "向量检索最终返回的结果数量",
+    "default": 10
+  },
+  "matrix_sticker_vector_fetch_k": {
+    "description": "Sticker 向量召回数量",
+    "type": "int",
+    "hint": "向量检索初次召回的候选数量，过滤 pack/tags/room_scope 前使用",
+    "default": 50
+  },
+  "matrix_sticker_similarity_threshold": {
+    "description": "Sticker 相似度阈值",
+    "type": "float",
+    "hint": "向量检索的最小相似度阈值，范围 -1 到 1",
+    "default": 0.35
+  },
+  "matrix_sticker_vector_rebuild_on_startup": {
+    "description": "启动时重建 Sticker 向量索引",
+    "type": "bool",
+    "hint": "开启后首次使用向量检索时会触发一次全量重建",
+    "default": false
+  },
+  "matrix_sticker_vector_auto_reconcile": {
+    "description": "自动同步 Sticker 向量索引",
+    "type": "bool",
+    "hint": "保存、同步、删除 Sticker 后自动增量同步向量索引",
+    "default": true
+  },
+  "matrix_sticker_vector_query_image_enabled": {
+    "description": "允许图片触发 Sticker 检索",
+    "type": "bool",
+    "hint": "开启后可直接使用当前消息图片或引用图片做向量检索",
+    "default": true
+  },
   "emoji_shortcodes": {
     "description": "启用 Emoji 短码转换",
     "type": "bool",

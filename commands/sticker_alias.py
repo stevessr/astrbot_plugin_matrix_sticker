@@ -41,7 +41,7 @@ class StickerAliasMixin(StickerBaseMixin):
             return f"别名 '{alias}' 已存在"
 
         sticker_meta.tags.append(alias)
-        self._storage._save_index()
+        self._storage.save_index()
         self._invalidate_sticker_lookup_cache()
 
         return f"已为 sticker {sticker_meta.sticker_id[:8]} 添加别名：{alias}"
@@ -61,7 +61,7 @@ class StickerAliasMixin(StickerBaseMixin):
             return f"别名 '{alias}' 不存在"
 
         sticker_meta.tags.remove(alias)
-        self._storage._save_index()
+        self._storage.save_index()
         self._invalidate_sticker_lookup_cache()
 
         return f"已移除别名：{alias}"
