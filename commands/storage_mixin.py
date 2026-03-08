@@ -279,107 +279,94 @@ class StickerStorageMixin:
             return False
         return default
 
-    def _is_vector_search_enabled(self) -> bool:
+    def _get_vector_config(self) -> dict[str, Any]:
         config = getattr(self, "config", None) or {}
-        return self._parse_bool_config(
-            config.get("matrix_sticker_vector_search_enabled", False),
-            False,
-        )
+        vector_config = config.get("matrix_sticker_vector", {})
+        if isinstance(vector_config, dict):
+            return vector_config
+        return {}
+
+    def _is_vector_search_enabled(self) -> bool:
+        vector_config = self._get_vector_config()
+        return self._parse_bool_config(vector_config.get("enabled", False), False)
 
     def _is_vector_auto_reconcile_enabled(self) -> bool:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         return self._parse_bool_config(
-            config.get("matrix_sticker_vector_auto_reconcile", True),
+            vector_config.get("auto_reconcile", True),
             True,
         )
 
     def _is_vector_rebuild_on_startup_enabled(self) -> bool:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         return self._parse_bool_config(
-            config.get("matrix_sticker_vector_rebuild_on_startup", False),
+            vector_config.get("rebuild_on_startup", False),
             False,
         )
 
     def _is_vector_query_image_enabled(self) -> bool:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         return self._parse_bool_config(
-            config.get("matrix_sticker_vector_query_image_enabled", True),
+            vector_config.get("query_image_enabled", True),
             True,
         )
 
     def _get_vector_provider_id(self) -> str:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         model = str(
-            config.get("matrix_sticker_embedding_model", "multimodalembedding@001")
+            vector_config.get("model", "multimodalembedding@001")
             or "multimodalembedding@001"
         ).strip()
-        project = str(config.get("matrix_sticker_vertex_project", "") or "").strip()
+        project = str(vector_config.get("vertex_project", "") or "").strip()
         location = str(
-            config.get("matrix_sticker_vertex_location", "us-central1") or "us-central1"
+            vector_config.get("vertex_location", "us-central1") or "us-central1"
         ).strip()
         project_part = project or "adc"
         return f"plugin_vertex:{project_part}:{location}:{model}"
 
     def _build_vector_provider_config(self) -> dict[str, Any]:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         return {
             "id": self._get_vector_provider_id(),
             "type": "plugin_vertex_multimodal_embedding",
             "vertex_project": str(
-                config.get("matrix_sticker_vertex_project", "") or ""
+                vector_config.get("vertex_project", "") or ""
             ).strip(),
             "vertex_location": str(
-                config.get("matrix_sticker_vertex_location", "us-central1")
-                or "us-central1"
+                vector_config.get("vertex_location", "us-central1") or "us-central1"
             ).strip(),
-            "embedding_api_base": str(
-                config.get("matrix_sticker_embedding_api_base", "") or ""
-            ).strip(),
+            "embedding_api_base": str(vector_config.get("api_base", "") or "").strip(),
             "embedding_model": str(
-                config.get("matrix_sticker_embedding_model", "multimodalembedding@001")
+                vector_config.get("model", "multimodalembedding@001")
                 or "multimodalembedding@001"
             ).strip(),
-            "embedding_dimensions": int(
-                config.get("matrix_sticker_embedding_dimensions", 1408) or 1408
-            ),
-            "timeout": int(config.get("matrix_sticker_embedding_timeout", 20) or 20),
-            "proxy": str(
-                config.get("matrix_sticker_embedding_proxy", "") or ""
-            ).strip(),
+            "embedding_dimensions": int(vector_config.get("dimensions", 1408) or 1408),
+            "timeout": int(vector_config.get("timeout", 20) or 20),
+            "proxy": str(vector_config.get("proxy", "") or "").strip(),
         }
 
     def _get_vector_top_k(self) -> int:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         try:
-            value = int(
-                config.get(
-                    "matrix_sticker_vector_top_k",
-                    self._DEFAULT_VECTOR_TOP_K,
-                )
-            )
+            value = int(vector_config.get("top_k", self._DEFAULT_VECTOR_TOP_K))
         except (TypeError, ValueError):
             value = self._DEFAULT_VECTOR_TOP_K
         return max(1, min(value, 50))
 
     def _get_vector_fetch_k(self) -> int:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         try:
-            value = int(
-                config.get(
-                    "matrix_sticker_vector_fetch_k",
-                    self._DEFAULT_VECTOR_FETCH_K,
-                )
-            )
+            value = int(vector_config.get("fetch_k", self._DEFAULT_VECTOR_FETCH_K))
         except (TypeError, ValueError):
             value = self._DEFAULT_VECTOR_FETCH_K
         return max(1, min(value, 500))
 
     def _get_vector_similarity_threshold(self) -> float:
-        config = getattr(self, "config", None) or {}
+        vector_config = self._get_vector_config()
         try:
             value = float(
-                config.get(
-                    "matrix_sticker_similarity_threshold",
+                vector_config.get(
+                    "similarity_threshold",
                     self._DEFAULT_VECTOR_SIMILARITY_THRESHOLD,
                 )
             )
@@ -1389,7 +1376,7 @@ class StickerStorageMixin:
         if not self._ensure_storage():
             return "Sticker 模块未初始化"
         if not self._is_vector_search_enabled():
-            return "向量搜索未启用，请先开启 matrix_sticker_vector_search_enabled。"
+            return "向量搜索未启用，请先开启 matrix_sticker_vector.enabled。"
         try:
             ok, reason, status = await self._reconcile_vector_index(force_full=True)
         except Exception as e:
