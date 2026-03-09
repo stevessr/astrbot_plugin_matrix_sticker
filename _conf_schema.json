@@ -61,7 +61,7 @@
       "backend": {
         "description": "Sticker 向量后端",
         "type": "string",
-        "hint": "当前支持 faiss；qdrant 为空壳占位，尚未实现实际存储逻辑",
+        "hint": "当前支持 faiss 与 qdrant 两种向量后端",
         "default": "faiss"
       },
       "model": {
@@ -145,7 +145,7 @@
       "qdrant": {
         "description": "Qdrant 后端配置",
         "type": "object",
-        "hint": "Qdrant 后端预留配置；当前仅为空壳占位，尚未接入实际读写逻辑",
+        "hint": "Qdrant 后端连接配置；使用 qdrant backend 时生效",
         "items": {
           "url": {
             "description": "Qdrant 服务地址",
@@ -156,25 +156,25 @@
           "api_key": {
             "description": "Qdrant API Key",
             "type": "string",
-            "hint": "Qdrant 鉴权密钥；当前仅占位，不会实际使用",
+            "hint": "Qdrant 鉴权密钥；如服务开启鉴权可在此填写",
             "default": ""
           },
           "collection": {
             "description": "Qdrant Collection 名称",
             "type": "string",
-            "hint": "预留的 collection 名称；当前仅占位，不会实际使用",
+            "hint": "Qdrant Collection 名称，默认 matrix_sticker_vectors",
             "default": "matrix_sticker_vectors"
           },
           "prefer_grpc": {
             "description": "优先使用 gRPC",
             "type": "bool",
-            "hint": "预留的连接选项；当前仅占位，不会实际使用",
+            "hint": "是否优先通过 gRPC 连接 Qdrant",
             "default": false
           },
           "timeout": {
             "description": "Qdrant 请求超时",
             "type": "int",
-            "hint": "预留的请求超时（秒）；当前仅占位，不会实际使用",
+            "hint": "Qdrant 请求超时（秒）",
             "default": 10
           }
         }
