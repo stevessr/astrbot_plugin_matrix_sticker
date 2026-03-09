@@ -374,6 +374,41 @@ class StickerStorageMixin:
             value = self._DEFAULT_VECTOR_SIMILARITY_THRESHOLD
         return max(-1.0, min(value, 1.0))
 
+    def _get_vector_backend_type(self) -> str:
+        vector_config = self._get_vector_config()
+        backend_type = str(vector_config.get("backend", "faiss") or "faiss").strip()
+        return backend_type.lower() or "faiss"
+
+    @staticmethod
+    def _safe_int_config(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _get_qdrant_config(self) -> dict[str, Any]:
+        vector_config = self._get_vector_config()
+        qdrant_config = vector_config.get("qdrant", {})
+        if not isinstance(qdrant_config, dict):
+            qdrant_config = {}
+        return {
+            "url": str(qdrant_config.get("url", "") or "").strip(),
+            "api_key": str(qdrant_config.get("api_key", "") or "").strip(),
+            "collection": str(
+                qdrant_config.get("collection", "matrix_sticker_vectors")
+                or "matrix_sticker_vectors"
+            ).strip()
+            or "matrix_sticker_vectors",
+            "prefer_grpc": self._parse_bool_config(
+                qdrant_config.get("prefer_grpc", False),
+                False,
+            ),
+            "timeout": max(
+                1,
+                self._safe_int_config(qdrant_config.get("timeout", 10), 10),
+            ),
+        }
+
     def _get_vector_index_base_dir(self) -> Path:
         try:
             data_dir = StarTools.get_data_dir("astrbot_plugin_matrix_sticker")
@@ -384,12 +419,27 @@ class StickerStorageMixin:
 
     def _get_vector_index(self) -> StickerVectorIndex:
         base_dir = self._get_vector_index_base_dir()
+        backend_type = self._get_vector_backend_type()
+        backend_config = self._get_qdrant_config() if backend_type == "qdrant" else {}
         current = getattr(self, "_vector_index", None)
         current_dir = getattr(self, "_vector_index_dir", None)
-        if current is None or Path(str(current_dir or "")) != base_dir:
-            current = StickerVectorIndex(base_dir)
+        current_backend_type = getattr(self, "_vector_index_backend_type", None)
+        current_backend_config = getattr(self, "_vector_index_backend_config", None)
+        if (
+            current is None
+            or Path(str(current_dir or "")) != base_dir
+            or str(current_backend_type or "") != backend_type
+            or current_backend_config != backend_config
+        ):
+            current = StickerVectorIndex(
+                base_dir,
+                backend_type=backend_type,
+                backend_config=backend_config,
+            )
             setattr(self, "_vector_index", current)
             setattr(self, "_vector_index_dir", base_dir)
+            setattr(self, "_vector_index_backend_type", backend_type)
+            setattr(self, "_vector_index_backend_config", backend_config)
         return current
 
     def _resolve_vector_provider(self) -> tuple[EmbeddingProvider | None, str | None]:
@@ -421,10 +471,15 @@ class StickerStorageMixin:
     async def _ensure_vector_index_open(
         self,
         provider: EmbeddingProvider,
-    ) -> StickerVectorIndex:
+    ) -> tuple[StickerVectorIndex | None, str | None]:
         index = self._get_vector_index()
-        await index.initialize(int(provider.get_dim()))
-        return index
+        try:
+            await index.initialize(int(provider.get_dim()))
+        except NotImplementedError:
+            return None, f"backend_not_implemented:{index.backend_type}"
+        except Exception as e:
+            return None, f"backend_initialize_failed:{index.backend_type}:{e}"
+        return index, None
 
     def _should_force_vector_rebuild(self) -> bool:
         pending = getattr(self, "_vector_force_rebuild_pending", None)
@@ -609,13 +664,17 @@ class StickerStorageMixin:
         provider, provider_reason = self._resolve_vector_provider()
         if provider is None:
             return False, provider_reason or "provider_unavailable", {}
-        index = await self._ensure_vector_index_open(provider)
+        index, index_reason = await self._ensure_vector_index_open(provider)
+        if index is None:
+            return False, index_reason or "index_unavailable", {}
         provider_id = self._get_vector_provider_id()
         dimension = int(provider.get_dim())
         compatible, incompatibility_reason, manifest = index.check_compatibility(
             provider_id,
             dimension,
         )
+        if incompatibility_reason == f"backend_not_implemented:{index.backend_type}":
+            return False, incompatibility_reason, {**manifest, **index.get_status()}
         if force_full or self._should_force_vector_rebuild() or not compatible:
             entries = await self._build_vector_documents(provider)
             count = await index.rebuild_full(provider_id, dimension, entries)
@@ -688,7 +747,9 @@ class StickerStorageMixin:
         provider, provider_reason = self._resolve_vector_provider()
         if provider is None:
             return None, None, provider_reason
-        index = await self._ensure_vector_index_open(provider)
+        index, index_reason = await self._ensure_vector_index_open(provider)
+        if index is None:
+            return None, None, index_reason or "index_unavailable"
         provider_id = self._get_vector_provider_id()
         dimension = int(provider.get_dim())
         compatible, incompatibility_reason, _manifest = index.check_compatibility(
@@ -1300,6 +1361,7 @@ class StickerStorageMixin:
         status = index.get_status()
         status["enabled"] = self._is_vector_search_enabled()
         status["provider_id"] = self._get_vector_provider_id()
+        status["backend_type"] = self._get_vector_backend_type()
         status["dirty"] = self._is_vector_index_dirty()
         if provider is not None:
             try:

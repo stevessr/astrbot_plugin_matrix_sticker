@@ -58,6 +58,12 @@
         "hint": "开启后优先使用多模态向量检索",
         "default": false
       },
+      "backend": {
+        "description": "Sticker 向量后端",
+        "type": "string",
+        "hint": "当前支持 faiss；qdrant 为空壳占位，尚未实现实际存储逻辑",
+        "default": "faiss"
+      },
       "model": {
         "description": "Sticker 向量模型",
         "type": "string",
@@ -135,6 +141,43 @@
         "type": "bool",
         "hint": "开启后可直接使用当前消息图片或引用图片做向量检索",
         "default": true
+      },
+      "qdrant": {
+        "description": "Qdrant 后端配置",
+        "type": "object",
+        "hint": "Qdrant 后端预留配置；当前仅为空壳占位，尚未接入实际读写逻辑",
+        "items": {
+          "url": {
+            "description": "Qdrant 服务地址",
+            "type": "string",
+            "hint": "例如 http://127.0.0.1:6333 或 https://qdrant.example.com",
+            "default": ""
+          },
+          "api_key": {
+            "description": "Qdrant API Key",
+            "type": "string",
+            "hint": "Qdrant 鉴权密钥；当前仅占位，不会实际使用",
+            "default": ""
+          },
+          "collection": {
+            "description": "Qdrant Collection 名称",
+            "type": "string",
+            "hint": "预留的 collection 名称；当前仅占位，不会实际使用",
+            "default": "matrix_sticker_vectors"
+          },
+          "prefer_grpc": {
+            "description": "优先使用 gRPC",
+            "type": "bool",
+            "hint": "预留的连接选项；当前仅占位，不会实际使用",
+            "default": false
+          },
+          "timeout": {
+            "description": "Qdrant 请求超时",
+            "type": "int",
+            "hint": "预留的请求超时（秒）；当前仅占位，不会实际使用",
+            "default": 10
+          }
+        }
       }
     }
   },

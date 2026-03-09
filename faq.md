@@ -17,6 +17,7 @@
 {
   "matrix_sticker_vector": {
     "enabled": true,
+    "backend": "faiss",
     "model": "multimodalembedding@001",
     "dimensions": 512,
     "vertex_project": "your-gcp-project",
@@ -29,15 +30,24 @@
     "similarity_threshold": 0.35,
     "rebuild_on_startup": false,
     "auto_reconcile": true,
-    "query_image_enabled": true
+    "query_image_enabled": true,
+    "qdrant": {
+      "url": "",
+      "api_key": "",
+      "collection": "matrix_sticker_vectors",
+      "prefer_grpc": false,
+      "timeout": 10
+    }
   }
 }
 ```
 
 说明：
 - `enabled`：是否启用向量检索。
+- `backend`：向量索引后端类型；当前可选 `faiss` 或 `qdrant`。
 - `model` / `dimensions`：内置 Vertex 多模态 embedding 模型与维度。
 - `vertex_project` / `vertex_location`：Vertex AI 项目与区域；`vertex_project` 留空时会尝试通过 ADC 自动检测。
 - `api_base` / `timeout` / `proxy`：请求地址覆盖、超时和代理配置。
 - `top_k` / `fetch_k` / `similarity_threshold`：召回数量、最终返回数量和最小相似度阈值。
 - `rebuild_on_startup` / `auto_reconcile` / `query_image_enabled`：控制启动重建、增量同步和图片查询能力。
+- `qdrant`：Qdrant 后端连接配置；使用 `qdrant` backend 时需要至少设置 `url`，`collection` 默认为 `matrix_sticker_vectors`。
