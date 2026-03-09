@@ -61,7 +61,7 @@
       "backend": {
         "description": "Sticker 向量后端",
         "type": "string",
-        "hint": "当前支持 faiss 与 qdrant 两种向量后端",
+        "hint": "当前支持 faiss 与 qdrant 两种向量后端；切换后端后建议执行一次 /sticker reindex",
         "default": "faiss"
       },
       "model": {
@@ -145,12 +145,12 @@
       "qdrant": {
         "description": "Qdrant 后端配置",
         "type": "object",
-        "hint": "Qdrant 后端连接配置；使用 qdrant backend 时生效",
+        "hint": "Qdrant 后端连接配置；使用 qdrant backend 时生效，首次启用后建议执行一次 /sticker reindex",
         "items": {
           "url": {
             "description": "Qdrant 服务地址",
             "type": "string",
-            "hint": "例如 http://127.0.0.1:6333 或 https://qdrant.example.com",
+            "hint": "例如 http://127.0.0.1:6333 或 https://qdrant.example.com；使用 qdrant backend 时必填",
             "default": ""
           },
           "api_key": {
