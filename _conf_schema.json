@@ -62,7 +62,8 @@
         "description": "Sticker 向量后端",
         "type": "string",
         "hint": "当前支持 faiss 与 qdrant 两种向量后端；切换后端后建议执行一次 /sticker reindex",
-        "default": "faiss"
+        "default": "faiss",
+        "options": ["faiss", "qdrant"]
       },
       "model": {
         "description": "Sticker 向量模型",
