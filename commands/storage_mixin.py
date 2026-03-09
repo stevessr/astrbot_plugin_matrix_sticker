@@ -877,39 +877,38 @@ class StickerStorageMixin:
     ) -> str:
         if not page:
             return f"No results at offset {offset}. Total matched: {total}."
+
+        start = offset + 1
+        end = offset + len(page)
         lines = [
-            (
-                f"Sticker search matched {total} item(s), "
-                f"returning {len(page)} from offset {offset}."
-            ),
-            (
-                f"search_mode={'semantic' if semantic else 'string'} "
-                f"query_image={'yes' if image_query_used else 'no'}"
-            ),
-            "Use tool sticker_send with sticker_id to send one.",
+            f"Sticker search results ({total} found, showing {start}-{end}).",
+            "Use sticker_send(sticker_id=...) to send one.",
         ]
-        for idx, (meta, score, meta_tags) in enumerate(page, start=offset + 1):
+        if end < total:
+            lines.append(f"Use offset={end} to see more results.")
+        if semantic:
+            mode = "text+image" if image_query_used else "text"
+            lines.append(f"Ranked by semantic relevance ({mode}).")
+        lines.append("")
+
+        for idx, (meta, _score, meta_tags) in enumerate(page, start=start):
             normalized_tags = [
                 str(tag).strip() for tag in meta_tags if str(tag).strip()
             ]
-            tags_text = ", ".join(normalized_tags[:8]) if normalized_tags else "-"
-            file_path_text, file_exists = self._format_local_file_path(
-                getattr(meta, "local_path", None)
-            )
+            tags_text = ", ".join(normalized_tags[:5]) if normalized_tags else "-"
             sticker_id = str(getattr(meta, "sticker_id", "") or "-")
             body = str(getattr(meta, "body", "") or "")
             pack_name_text = str(getattr(meta, "pack_name", "") or "-")
             use_count = self._to_int(getattr(meta, "use_count", 0))
-            lines.append(
-                f"{idx}. id={sticker_id} shortcode=:{body}: "
-                f"pack={pack_name_text} tags={tags_text} "
-                f"used={use_count} "
-                f"last={self._format_timestamp(getattr(meta, 'last_used', None))} "
-                f"score={score:.4f} "
-                f"file_path={file_path_text} "
-                f"file_exists={'yes' if file_exists else 'no'}"
-            )
-        return "\n".join(lines)
+
+            lines.append(f"{idx}. :{body}: [{sticker_id}]")
+            lines.append(f"   pack: {pack_name_text}")
+            if tags_text != "-":
+                lines.append(f"   tags: {tags_text}")
+            lines.append(f"   used: {use_count}")
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
 
     async def _search_stickers_semantic(
         self,

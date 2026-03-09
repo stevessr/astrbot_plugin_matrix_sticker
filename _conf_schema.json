@@ -145,6 +145,7 @@
       "qdrant": {
         "description": "Qdrant 后端配置",
         "type": "object",
+        "condition": { "backend": "qdrant" },
         "hint": "Qdrant 后端连接配置；使用 qdrant backend 时生效，首次启用后建议执行一次 /sticker reindex",
         "items": {
           "url": {
